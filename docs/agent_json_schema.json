@@ -1,0 +1,173 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GnaniAgentPlan",
+  "description": "The structured JSON plan that Gnani Evon must return for the Agent to process",
+  "type": "object",
+  "required": ["mode", "goal", "steps"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["ASK", "DO", "AUTOMATE"],
+      "description": "The detected intent mode"
+    },
+    "goal": {
+      "type": "string",
+      "description": "A human-readable description of what the user wants to achieve"
+    },
+    "requires_confirmation": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the overall plan requires user confirmation before execution"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The ordered list of tool calls to execute",
+      "items": {
+        "type": "object",
+        "required": ["id", "tool", "parameters"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^step_[0-9]+$",
+            "description": "Unique step ID, e.g. step_1"
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool name from the Tool Registry (e.g. crm.find_order)"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Parameters to pass to the tool. Can reference prior step outputs using {{step_N.field}} syntax"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "List of step IDs this step depends on (for sequential ordering)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description of what this step does"
+          }
+        }
+      }
+    },
+    "automation_config": {
+      "type": "object",
+      "description": "Only present when mode is AUTOMATE",
+      "properties": {
+        "trigger_type": {
+          "type": "string",
+          "enum": ["schedule", "event", "webhook"]
+        },
+        "trigger_config": {
+          "type": "object",
+          "description": "Trigger-specific configuration (cron for schedule, event name for event, etc.)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name for the automation"
+        }
+      }
+    },
+    "clarification_needed": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if Evon could not fully plan due to missing information"
+    },
+    "clarification_question": {
+      "type": "string",
+      "description": "If clarification_needed is true, the question to ask the user"
+    }
+  },
+  "examples": [
+    {
+      "mode": "ASK",
+      "goal": "Count delayed orders in CRM",
+      "requires_confirmation": false,
+      "steps": [
+        {
+          "id": "step_1",
+          "tool": "crm.find_order",
+          "parameters": { "status": "delayed" },
+          "description": "Find all delayed orders"
+        }
+      ]
+    },
+    {
+      "mode": "DO",
+      "goal": "Create high-priority tickets for all delayed orders and notify logistics on Slack",
+      "requires_confirmation": true,
+      "steps": [
+        {
+          "id": "step_1",
+          "tool": "crm.find_order",
+          "parameters": { "delayed_more_than_days": 2 },
+          "description": "Find orders delayed more than 2 days"
+        },
+        {
+          "id": "step_2",
+          "tool": "crm.create_ticket",
+          "parameters": {
+            "customer_id": "{{step_1.orders[*].customer_id}}",
+            "order_id": "{{step_1.orders[*].order_id}}",
+            "priority": "high",
+            "title": "Order Delayed",
+            "description": "Order has been delayed by {{step_1.orders[*].delay_days}} days"
+          },
+          "depends_on": ["step_1"],
+          "description": "Create a high-priority ticket for each delayed order"
+        },
+        {
+          "id": "step_3",
+          "tool": "slack.send_message",
+          "parameters": {
+            "channel": "#logistics-demo",
+            "message": "Alert: {{step_1.count}} orders are delayed. Tickets created. Please review."
+          },
+          "depends_on": ["step_2"],
+          "description": "Notify logistics team on Slack"
+        }
+      ]
+    },
+    {
+      "mode": "AUTOMATE",
+      "goal": "Whenever an order is delayed by more than 2 days, create a ticket and notify logistics",
+      "requires_confirmation": true,
+      "steps": [
+        {
+          "id": "step_1",
+          "tool": "crm.find_order",
+          "parameters": { "delayed_more_than_days": 2, "status": "delayed" },
+          "description": "Check for newly delayed orders"
+        },
+        {
+          "id": "step_2",
+          "tool": "crm.create_ticket",
+          "parameters": {
+            "customer_id": "{{step_1.orders[*].customer_id}}",
+            "priority": "high",
+            "title": "Order Delayed Alert",
+            "description": "Automated: Order delayed more than 2 days"
+          },
+          "depends_on": ["step_1"]
+        },
+        {
+          "id": "step_3",
+          "tool": "slack.send_message",
+          "parameters": {
+            "channel": "#logistics-demo",
+            "message": "{{step_1.count}} new delayed orders. Tickets auto-created."
+          },
+          "depends_on": ["step_2"]
+        }
+      ],
+      "automation_config": {
+        "trigger_type": "schedule",
+        "trigger_config": { "cron": "0 */6 * * *" },
+        "name": "Delayed Order Alert Every 6 Hours"
+      }
+    }
+  ]
+}
+

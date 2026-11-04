@@ -1,0 +1,309 @@
+tools:
+  # ──────────────────────────────────────────────────────────────
+  # GMAIL TOOLS
+  # ──────────────────────────────────────────────────────────────
+  - name: gmail.search
+    description: "Search and read permitted Gmail messages"
+    integration: gmail
+    risk_level: low
+    required_permission: gmail.read
+    n8n_workflow_id: "gmail-search-v1"
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: "Gmail search query (e.g. 'from:customer subject:order')"
+        max_results:
+          type: integer
+          default: 10
+          description: "Maximum number of results to return"
+      required: [query]
+    output_schema:
+      type: object
+      properties:
+        emails:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              from: { type: string }
+              subject: { type: string }
+              snippet: { type: string }
+              date: { type: string }
+        count: { type: integer }
+
+  - name: gmail.send
+    description: "Send an email via Gmail"
+    integration: gmail
+    risk_level: medium
+    required_permission: gmail.send
+    n8n_workflow_id: "gmail-send-v1"
+    input_schema:
+      type: object
+      properties:
+        to:
+          type: string
+          description: "Recipient email address"
+        subject:
+          type: string
+          description: "Email subject line"
+        body:
+          type: string
+          description: "Email body (plain text or HTML)"
+        cc:
+          type: string
+          description: "CC email address (optional)"
+      required: [to, subject, body]
+    output_schema:
+      type: object
+      properties:
+        message_id: { type: string }
+        status: { type: string }
+
+  # ──────────────────────────────────────────────────────────────
+  # CRM TOOLS
+  # ──────────────────────────────────────────────────────────────
+  - name: crm.find_customer
+    description: "Find customer records in the CRM by name, email, or ID"
+    integration: crm
+    risk_level: low
+    required_permission: crm.read
+    n8n_workflow_id: "crm-find-customer-v1"
+    input_schema:
+      type: object
+      properties:
+        query: { type: string, description: "Free-text search for customer name or email" }
+        customer_id: { type: string, description: "Specific customer ID" }
+        email: { type: string, description: "Customer email address" }
+    output_schema:
+      type: object
+      properties:
+        customers:
+          type: array
+          items:
+            type: object
+            properties:
+              customer_id: { type: string }
+              name: { type: string }
+              email: { type: string }
+              phone: { type: string }
+        count: { type: integer }
+
+  - name: crm.find_order
+    description: "Find order records by customer or status filter"
+    integration: crm
+    risk_level: low
+    required_permission: crm.read
+    n8n_workflow_id: "crm-find-order-v1"
+    input_schema:
+      type: object
+      properties:
+        customer_id: { type: string, description: "Filter by customer ID" }
+        status:
+          type: string
+          enum: [pending, processing, shipped, delayed, delivered, cancelled]
+          description: "Filter by order status"
+        delayed_more_than_days:
+          type: integer
+          description: "Only return orders delayed more than N days"
+    output_schema:
+      type: object
+      properties:
+        orders:
+          type: array
+          items:
+            type: object
+            properties:
+              order_id: { type: string }
+              customer_id: { type: string }
+              customer_name: { type: string }
+              customer_email: { type: string }
+              status: { type: string }
+              delay_days: { type: integer }
+              created_at: { type: string }
+        count: { type: integer }
+
+  - name: crm.create_ticket
+    description: "Create a support ticket for a customer or order issue"
+    integration: crm
+    risk_level: medium
+    required_permission: crm.write
+    n8n_workflow_id: "crm-create-ticket-v1"
+    input_schema:
+      type: object
+      properties:
+        customer_id: { type: string, description: "Customer this ticket is for" }
+        order_id: { type: string, description: "Related order ID (optional)" }
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+          description: "Ticket priority level"
+        title: { type: string, description: "Short ticket title" }
+        description: { type: string, description: "Full description of the issue" }
+      required: [customer_id, priority, title, description]
+    output_schema:
+      type: object
+      properties:
+        ticket_id: { type: string }
+        status: { type: string }
+
+  - name: crm.update_customer
+    description: "Update customer data in the CRM"
+    integration: crm
+    risk_level: medium
+    required_permission: crm.write
+    n8n_workflow_id: "crm-update-customer-v1"
+    input_schema:
+      type: object
+      properties:
+        customer_id: { type: string, description: "ID of the customer to update" }
+        updates:
+          type: object
+          description: "Key-value pairs of fields to update"
+          properties:
+            name: { type: string }
+            email: { type: string }
+            phone: { type: string }
+            notes: { type: string }
+      required: [customer_id, updates]
+    output_schema:
+      type: object
+      properties:
+        customer_id: { type: string }
+        updated: { type: boolean }
+
+  # ──────────────────────────────────────────────────────────────
+  # SLACK TOOLS
+  # ──────────────────────────────────────────────────────────────
+  - name: slack.send_message
+    description: "Send a message to a Slack channel or direct message"
+    integration: slack
+    risk_level: medium
+    required_permission: slack.send
+    n8n_workflow_id: "slack-send-message-v1"
+    input_schema:
+      type: object
+      properties:
+        channel: { type: string, description: "Channel name (e.g. #logistics) or user ID" }
+        message: { type: string, description: "The message text to send" }
+        thread_ts: { type: string, description: "Thread timestamp to reply to (optional)" }
+      required: [channel, message]
+    output_schema:
+      type: object
+      properties:
+        ts: { type: string }
+        channel: { type: string }
+        ok: { type: boolean }
+
+  # ──────────────────────────────────────────────────────────────
+  # WHATSAPP TOOLS
+  # ──────────────────────────────────────────────────────────────
+  - name: whatsapp.send_message
+    description: "Send a WhatsApp message to a phone number"
+    integration: whatsapp
+    risk_level: medium
+    required_permission: whatsapp.send
+    n8n_workflow_id: "whatsapp-send-message-v1"
+    input_schema:
+      type: object
+      properties:
+        to: { type: string, description: "Recipient phone number with country code (e.g. +919876543210)" }
+        message: { type: string, description: "The message text to send" }
+      required: [to, message]
+    output_schema:
+      type: object
+      properties:
+        message_id: { type: string }
+        status: { type: string }
+
+  # ──────────────────────────────────────────────────────────────
+  # CALENDAR TOOLS
+  # ──────────────────────────────────────────────────────────────
+  - name: calendar.find_slot
+    description: "Find available calendar slots for a meeting"
+    integration: calendar
+    risk_level: low
+    required_permission: calendar.read
+    n8n_workflow_id: "calendar-find-slot-v1"
+    input_schema:
+      type: object
+      properties:
+        attendees:
+          type: array
+          items: { type: string }
+          description: "List of attendee email addresses"
+        duration_minutes: { type: integer, description: "Meeting duration in minutes" }
+        within_days: { type: integer, default: 7, description: "Search within next N days" }
+      required: [attendees, duration_minutes]
+    output_schema:
+      type: object
+      properties:
+        slots:
+          type: array
+          items:
+            type: object
+            properties:
+              start: { type: string }
+              end: { type: string }
+
+  - name: calendar.create_event
+    description: "Create a calendar event with attendees"
+    integration: calendar
+    risk_level: medium
+    required_permission: calendar.write
+    n8n_workflow_id: "calendar-create-event-v1"
+    input_schema:
+      type: object
+      properties:
+        title: { type: string, description: "Event title" }
+        start_time: { type: string, description: "ISO 8601 start time (e.g. 2026-11-10T10:00:00+05:30)" }
+        end_time: { type: string, description: "ISO 8601 end time" }
+        attendees:
+          type: array
+          items: { type: string }
+          description: "Attendee email addresses"
+        description: { type: string, description: "Event description (optional)" }
+      required: [title, start_time, end_time]
+    output_schema:
+      type: object
+      properties:
+        event_id: { type: string }
+        status: { type: string }
+        meeting_link: { type: string }
+
+# ──────────────────────────────────────────────────────────────
+# PERMISSION GROUPS
+# ──────────────────────────────────────────────────────────────
+permission_groups:
+  READ:
+    - crm.read
+    - gmail.read
+    - slack.read
+    - calendar.read
+  WRITE:
+    - crm.write
+    - gmail.send
+    - slack.send
+    - whatsapp.send
+    - calendar.write
+  ADMIN:
+    - integration.manage
+    - user.manage
+    - automation.delete
+
+# ──────────────────────────────────────────────────────────────
+# RISK POLICY
+# ──────────────────────────────────────────────────────────────
+risk_policy:
+  low:
+    action: auto_execute
+    description: "Execute immediately when permission is present"
+  medium:
+    action: require_confirmation
+    description: "Ask user to approve before executing"
+  high:
+    action: block
+    description: "Block and require explicit elevated authorization"
+
