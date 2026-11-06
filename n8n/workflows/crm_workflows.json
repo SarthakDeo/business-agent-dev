@@ -1,0 +1,127 @@
+{
+  "name": "Gnani CRM Workflows",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-find-order-v1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-crm-find-order-webhook",
+      "name": "CRM Find Order Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 240],
+      "webhookId": "crm-find-order-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizes CRM order search results\nconst payload = $input.first().json.body || $input.first().json;\nconst params = payload.parameters || {};\n\n// Sample normalized return matching registry\nconst demoOrders = [\n  {\n    order_id: 'ORD-0001',\n    customer_id: 'CUST-001',\n    customer_name: 'John Doe',\n    customer_email: 'john@example.com',\n    status: 'delayed',\n    delay_days: 4,\n    created_at: '2026-10-25T10:00:00Z'\n  },\n  {\n    order_id: 'ORD-0002',\n    customer_id: 'CUST-002',\n    customer_name: 'Jane Smith',\n    customer_email: 'jane.smith2@example.com',\n    status: 'delayed',\n    delay_days: 3,\n    created_at: '2026-10-26T11:00:00Z'\n  }\n];\n\nconst filtered = demoOrders.filter(o => {\n  if (params.status && o.status !== params.status) return false;\n  if (params.delayed_more_than_days && o.delay_days < params.delayed_more_than_days) return false;\n  return true;\n});\n\nreturn [{\n  json: {\n    success: true,\n    provider_reference: 'crm_ref_' + Date.now(),\n    orders: filtered,\n    count: filtered.length,\n    normalized_data: { orders: filtered, count: filtered.length }\n  }\n}];"
+      },
+      "id": "node-crm-find-order-handler",
+      "name": "Process CRM Order Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "node-crm-find-order-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 240]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-create-ticket-v1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-crm-ticket-webhook",
+      "name": "CRM Create Ticket Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 440],
+      "webhookId": "crm-create-ticket-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body || $input.first().json;\nconst params = payload.parameters || {};\nconst ticketId = 'TCK-' + Math.floor(1000 + Math.random() * 9000);\n\nreturn [{\n  json: {\n    success: true,\n    provider_reference: ticketId,\n    ticket_id: ticketId,\n    status: 'created',\n    normalized_data: {\n      ticket_id: ticketId,\n      status: 'created',\n      customer_id: params.customer_id,\n      priority: params.priority\n    }\n  }\n}];"
+      },
+      "id": "node-crm-ticket-handler",
+      "name": "Process Create Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 440]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "node-crm-ticket-respond",
+      "name": "Respond to Ticket Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 440]
+    }
+  ],
+  "connections": {
+    "CRM Find Order Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process CRM Order Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process CRM Order Query": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Create Ticket Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process Create Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Create Ticket": {
+      "main": [
+        [
+          {
+            "node": "Respond to Ticket Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

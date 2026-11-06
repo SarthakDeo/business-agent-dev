@@ -8,6 +8,7 @@ import requests
 from typing import Optional
 from .context_manager import ConversationContext
 from .tool_registry import get_tool
+from ..integrations import dispatch_tool
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,9 @@ def execute_plan(
                 agent_run_id=agent_run_id,
                 step_id=step_id,
             )
+        except requests.exceptions.RequestException as net_err:
+            logger.warning(f"n8n unreachable ({net_err}). Executing tool '{tool_name}' via native integration handler.")
+            result = dispatch_tool(tool_name, resolved_params)
         except Exception as e:
             raise ExecutionError(step_id, tool_name, str(e))
 

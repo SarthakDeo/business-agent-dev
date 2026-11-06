@@ -1,0 +1,127 @@
+{
+  "name": "Gnani Gmail Workflows",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gmail-search-v1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-gmail-search-webhook",
+      "name": "Gmail Search Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 240],
+      "webhookId": "gmail-search-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body || $input.first().json;\nconst params = payload.parameters || {};\n\nconst sampleEmails = [\n  {\n    id: 'msg_001',\n    from: 'john@example.com',\n    subject: 'Delayed shipment update requested',\n    snippet: 'When will my delayed package arrive?',\n    date: '2026-11-04T12:00:00Z'\n  }\n];\n\nreturn [{\n  json: {\n    success: true,\n    provider_reference: 'gmail_search_' + Date.now(),\n    emails: sampleEmails,\n    count: sampleEmails.length,\n    normalized_data: { emails: sampleEmails, count: sampleEmails.length }\n  }\n}];"
+      },
+      "id": "node-gmail-search-handler",
+      "name": "Format Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "node-gmail-search-respond",
+      "name": "Respond to Gmail Search",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 240]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gmail-send-v1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-gmail-send-webhook",
+      "name": "Gmail Send Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 440],
+      "webhookId": "gmail-send-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body || $input.first().json;\nconst params = payload.parameters || {};\nconst messageId = 'gmail_msg_' + Math.random().toString(36).substring(2, 10);\n\nreturn [{\n  json: {\n    success: true,\n    provider_reference: messageId,\n    message_id: messageId,\n    status: 'sent',\n    normalized_data: {\n      message_id: messageId,\n      to: params.to,\n      subject: params.subject,\n      status: 'sent'\n    }\n  }\n}];"
+      },
+      "id": "node-gmail-send-handler",
+      "name": "Format Gmail Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 440]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "node-gmail-send-respond",
+      "name": "Respond to Gmail Send",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 440]
+    }
+  ],
+  "connections": {
+    "Gmail Search Webhook": {
+      "main": [
+        [
+          {
+            "node": "Format Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Search Results": {
+      "main": [
+        [
+          {
+            "node": "Respond to Gmail Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Send Webhook": {
+      "main": [
+        [
+          {
+            "node": "Format Gmail Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Gmail Send": {
+      "main": [
+        [
+          {
+            "node": "Respond to Gmail Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

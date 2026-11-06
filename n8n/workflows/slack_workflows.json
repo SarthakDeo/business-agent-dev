@@ -1,0 +1,69 @@
+{
+  "name": "Gnani Slack Workflows",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-send-message-v1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-slack-send-webhook",
+      "name": "Slack Send Message Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 240],
+      "webhookId": "slack-send-message-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body || $input.first().json;\nconst params = payload.parameters || {};\nconst ts = (Date.now() / 1000).toFixed(6);\n\nreturn [{\n  json: {\n    success: true,\n    provider_reference: 'slack_msg_' + ts,\n    ts: ts,\n    channel: params.channel || '#logistics-demo',\n    ok: true,\n    normalized_data: {\n      ts: ts,\n      channel: params.channel || '#logistics-demo',\n      ok: true,\n      message: params.message\n    }\n  }\n}];"
+      },
+      "id": "node-slack-send-handler",
+      "name": "Format Slack Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "node-slack-send-respond",
+      "name": "Respond to Slack Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 240]
+    }
+  ],
+  "connections": {
+    "Slack Send Message Webhook": {
+      "main": [
+        [
+          {
+            "node": "Format Slack Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Slack Output": {
+      "main": [
+        [
+          {
+            "node": "Respond to Slack Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
