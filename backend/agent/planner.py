@@ -78,8 +78,9 @@ def plan(user_message: str, conversation_history: list[dict] = None) -> dict:
     tools_summary = get_tools_summary_for_prompt()
     system = SYSTEM_PROMPT.format(tools_summary=tools_summary)
 
+    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
     model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
+        model_name=gemini_model,
         system_instruction=system,
         generation_config=genai.GenerationConfig(
             temperature=0.1,

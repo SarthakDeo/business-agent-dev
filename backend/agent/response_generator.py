@@ -44,8 +44,9 @@ def generate_response(
         return _fallback_response(plan, execution_results, pending_confirmations)
 
     genai.configure(api_key=api_key)
+    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
     model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
+        model_name=gemini_model,
         system_instruction=RESPONSE_SYSTEM_PROMPT,
         generation_config=genai.GenerationConfig(temperature=0.4),
     )
