@@ -21,6 +21,14 @@ Write a concise, friendly, human-readable response that:
 """
 
 
+FALLBACK_MODELS = [
+    os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"),
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-2.5-pro",
+]
+
+
 def generate_response(
     user_message: str,
     plan: dict,
@@ -28,28 +36,13 @@ def generate_response(
     pending_confirmations: list[dict] = None,
 ) -> str:
     """
-    Generate a natural language response for the user.
-    
-    Args:
-        user_message: The original user request.
-        plan: The executed plan dict.
-        execution_results: Dict of {step_id: result}.
-        pending_confirmations: Steps awaiting user approval (not yet executed).
-    
-    Returns:
-        Human-readable response string.
+    Generate a natural language response for the user with model fallback.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return _fallback_response(plan, execution_results, pending_confirmations)
 
     genai.configure(api_key=api_key)
-    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-    model = genai.GenerativeModel(
-        model_name=gemini_model,
-        system_instruction=RESPONSE_SYSTEM_PROMPT,
-        generation_config=genai.GenerationConfig(temperature=0.4),
-    )
 
     summary_prompt = f"""
 User request: "{user_message}"
@@ -65,12 +58,21 @@ Pending confirmations (steps not yet executed, awaiting user approval):
 
 Write the response now:
 """
-    try:
-        response = model.generate_content(summary_prompt)
-        return response.text.strip()
-    except Exception as e:
-        logger.error(f"Response generation failed: {e}")
-        return _fallback_response(plan, execution_results, pending_confirmations)
+
+    for model_name in FALLBACK_MODELS:
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=RESPONSE_SYSTEM_PROMPT,
+                generation_config=genai.GenerationConfig(temperature=0.4),
+            )
+            response = model.generate_content(summary_prompt)
+            return response.text.strip()
+        except Exception as e:
+            logger.warning(f"Response model {model_name} failed: {e}. Trying fallback...")
+            continue
+
+    return _fallback_response(plan, execution_results, pending_confirmations)
 
 
 def _fallback_response(plan: dict, results: dict, pending: list) -> str:

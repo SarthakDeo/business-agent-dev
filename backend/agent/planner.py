@@ -54,20 +54,17 @@ Rules:
 - Output ONLY valid JSON. No markdown. No explanation text outside JSON.
 """
 
+FALLBACK_MODELS = [
+    os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"),
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-2.5-pro",
+]
+
+
 def plan(user_message: str, conversation_history: list[dict] = None) -> dict:
     """
-    Call Gemini to produce a structured agent plan.
-    
-    Args:
-        user_message: The user's natural language request.
-        conversation_history: List of prior messages [{"role": "user"|"model", "parts": ["text"]}]
-    
-    Returns:
-        Parsed plan dict matching the agent JSON schema.
-    
-    Raises:
-        ValueError: If Gemini returns invalid JSON or unknown mode.
-        RuntimeError: If Gemini API call fails.
+    Call Gemini to produce a structured agent plan with multi-model fallback.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -78,34 +75,34 @@ def plan(user_message: str, conversation_history: list[dict] = None) -> dict:
     tools_summary = get_tools_summary_for_prompt()
     system = SYSTEM_PROMPT.format(tools_summary=tools_summary)
 
-    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-    model = genai.GenerativeModel(
-        model_name=gemini_model,
-        system_instruction=system,
-        generation_config=genai.GenerationConfig(
-            temperature=0.1,
-            response_mime_type="application/json",
-        ),
-    )
-
     history = conversation_history or []
-    chat = model.start_chat(history=history)
+    last_err = None
 
-    try:
-        response = chat.send_message(user_message)
-        raw = response.text.strip()
-        logger.debug(f"Gemini raw response: {raw}")
-    except Exception as e:
-        raise RuntimeError(f"Gemini API call failed: {e}") from e
+    for model_name in FALLBACK_MODELS:
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=system,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                ),
+            )
+            chat = model.start_chat(history=history)
+            response = chat.send_message(user_message)
+            raw = response.text.strip()
+            logger.debug(f"Gemini ({model_name}) raw response: {raw}")
 
-    try:
-        plan_dict = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error(f"Gemini returned invalid JSON: {raw}")
-        raise ValueError(f"Gemini returned invalid JSON: {e}") from e
+            plan_dict = json.loads(raw)
+            _validate_plan_structure(plan_dict)
+            return plan_dict
 
-    _validate_plan_structure(plan_dict)
-    return plan_dict
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Model {model_name} failed: {e}. Trying next fallback...")
+            continue
+
+    raise RuntimeError(f"All Gemini models failed: {last_err}") from last_err
 
 
 def _validate_plan_structure(plan: dict) -> None:
