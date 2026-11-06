@@ -1,0 +1,15 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+google-generativeai>=0.8.0
+google-genai>=1.0.0
+pydantic>=2.10.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+jsonschema>=4.20.0
+requests>=2.31.0
+psycopg2-binary>=2.9.9
+sqlalchemy>=2.0.30
+alembic>=1.14.0
+python-multipart>=0.0.17
+httpx>=0.28.0
+pytest>=8.0.0
