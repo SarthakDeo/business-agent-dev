@@ -52,6 +52,19 @@
         }
       }
     },
+    "trigger": {
+      "type": "object",
+      "description": "Canonical workflow trigger; required for AUTOMATE mode",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["webhook"]
+        },
+        "parameters": {
+          "type": "object"
+        }
+      }
+    },
     "automation_config": {
       "type": "object",
       "description": "Only present when mode is AUTOMATE",

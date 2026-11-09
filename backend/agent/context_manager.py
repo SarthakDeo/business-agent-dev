@@ -6,6 +6,8 @@ import re
 import logging
 from typing import Any, Optional
 
+from ..integrations import IntegrationManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,12 +16,27 @@ class ConversationContext:
     Holds the state for a single agent run / conversation turn.
     """
 
-    def __init__(self, user_id: str, org_id: str, conversation_id: Optional[str] = None):
+    def __init__(
+        self,
+        user_id: str,
+        org_id: str,
+        conversation_id: Optional[str] = None,
+        integration_manager: Optional[IntegrationManager] = None,
+    ):
         self.user_id = user_id
         self.org_id = org_id
         self.conversation_id = conversation_id
         self.message_history: list[dict] = []   # Gemini chat history
         self.step_outputs: dict[str, Any] = {}  # step_id -> result dict
+        self.pending_steps: list[dict] = []     # steps awaiting user confirmation
+        self.pending_plan: Optional[dict] = None
+        self.pending_automation_workflow: Optional[dict] = None
+        self.pending_automation_id: Optional[str] = None
+        self.pending_mode: Optional[str] = None
+        self.approved_step_ids: set[str] = set()
+        # The context carries infrastructure dependencies for the run.  Callers
+        # may inject a shared manager, but a run is never silently unbound.
+        self.integration_manager = integration_manager or IntegrationManager()
         self.run_id: Optional[str] = None
 
     def add_user_message(self, text: str):
@@ -30,7 +47,7 @@ class ConversationContext:
 
     def store_step_output(self, step_id: str, output: dict):
         self.step_outputs[step_id] = output
-        logger.debug(f"Stored output for {step_id}: {output}")
+        logger.debug("Stored output for %s", step_id)
 
     def resolve_templates(self, parameters: dict) -> dict:
         """

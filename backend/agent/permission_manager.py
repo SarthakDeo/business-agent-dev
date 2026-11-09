@@ -43,10 +43,16 @@ def check_permissions(plan: dict, user_permissions: list[str], user_id: str) -> 
         
         tool_def = get_tool(tool_name)
         if not tool_def:
-            continue
+            raise PermissionDeniedError(
+                step_id, tool_name, "registered tool authorization", user_id
+            )
         
         required = tool_def.get("required_permission")
-        if required and required not in perm_set:
+        if not isinstance(required, str) or not required.strip():
+            raise PermissionDeniedError(
+                step_id, tool_name, "configured tool authorization", user_id
+            )
+        if required not in perm_set:
             logger.warning(
                 f"Permission denied: user={user_id}, step={step_id}, "
                 f"tool={tool_name}, required={required}"

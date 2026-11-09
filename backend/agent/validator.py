@@ -3,8 +3,9 @@ validator.py
 Validates tool call parameters against the Tool Registry input schemas.
 """
 import logging
+import re
 from jsonschema import validate, ValidationError as JsonSchemaValidationError
-from .tool_registry import get_tool
+from .tool_registry import get_tool, tool_exists
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,71 @@ class ValidationError(Exception):
         self.tool_name = tool_name
         self.message = message
         super().__init__(f"[{step_id}][{tool_name}] Validation failed: {message}")
+
+
+def _reject_unknown_parameters(parameters: dict, schema: dict, step_id: str, tool_name: str):
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    unknown = set(parameters) - set(properties)
+    if unknown:
+        field = sorted(unknown)[0]
+        raise ValidationError(step_id, tool_name, f"Unexpected parameter '{field}'")
+    for key, value in parameters.items():
+        property_schema = properties.get(key, {})
+        if isinstance(value, dict):
+            _reject_unknown_parameters(value, property_schema, step_id, tool_name)
+        elif isinstance(value, list):
+            item_schema = property_schema.get("items", {})
+            for item in value:
+                if isinstance(item, dict):
+                    _reject_unknown_parameters(item, item_schema, step_id, tool_name)
+
+
+def validate_agent_plan(plan: dict) -> dict:
+    """Validate the top-level structure before tool selection or execution."""
+    if not isinstance(plan, dict):
+        raise ValidationError("plan", "unknown", "Plan must be an object")
+    if plan.get("mode") not in ("ASK", "DO", "AUTOMATE"):
+        raise ValidationError("plan", "unknown", "Invalid plan mode")
+    if not isinstance(plan.get("goal"), str) or not plan["goal"].strip():
+        raise ValidationError("plan", "unknown", "Plan goal must be a non-empty string")
+    forbidden_context_fields = {"organization_id", "org_id", "user_id", "permissions", "credential_id"}
+    supplied_context_fields = forbidden_context_fields.intersection(plan)
+    if supplied_context_fields:
+        raise ValidationError("plan", "unknown", "Plan cannot supply runtime security context")
+
+    is_modify = plan.get("mode") == "AUTOMATE" and plan.get("operation") == "MODIFY"
+    if is_modify:
+        if not plan.get("target_automation"):
+            raise ValidationError("plan", "unknown", "AUTOMATE MODIFY requires target_automation")
+        if not isinstance(plan.get("modification"), dict):
+            raise ValidationError("plan", "unknown", "AUTOMATE MODIFY requires modification object")
+        return plan
+
+    steps = plan.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise ValidationError("plan", "unknown", "Plan steps must be a non-empty list")
+    seen_ids = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            raise ValidationError("plan", "unknown", "Each step must be an object")
+        step_id = step.get("id")
+        valid_automation_id = (
+            plan.get("mode") == "AUTOMATE"
+            and isinstance(step_id, str)
+            and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", step_id)
+        )
+        if not isinstance(step_id, str) or (not step_id.startswith("step_") and not valid_automation_id):
+            raise ValidationError(str(step_id or "unknown"), "unknown", "Invalid step id")
+        if step_id in seen_ids:
+            raise ValidationError(step_id, "unknown", "Duplicate step id")
+        seen_ids.add(step_id)
+        if not isinstance(step.get("tool"), str) or not step["tool"]:
+            raise ValidationError(step_id, "unknown", "Step tool must be a string")
+        if not tool_exists(step["tool"]):
+            raise ValidationError(step_id, step["tool"], "Tool is not registered")
+        if not isinstance(step.get("parameters", {}), dict):
+            raise ValidationError(step_id, step.get("tool", "unknown"), "Parameters must be an object")
+    return plan
 
 
 def validate_plan(plan: dict) -> dict:
@@ -38,6 +104,7 @@ def validate_plan(plan: dict) -> dict:
             raise ValidationError(step_id, tool_name, f"Tool '{tool_name}' not in registry")
 
         input_schema = tool_def.get("input_schema", {})
+        _reject_unknown_parameters(parameters, input_schema, step_id, tool_name)
         
         # Replace template references with typed placeholders for schema validation
         clean_params = _mock_templates_for_validation(parameters, input_schema)

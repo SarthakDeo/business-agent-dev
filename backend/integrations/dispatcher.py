@@ -21,13 +21,27 @@ from . import slack_integration
 logger = logging.getLogger(__name__)
 
 
-def dispatch_tool(tool_name: str, parameters: dict) -> dict:
+def dispatch_tool(
+    tool_name: str,
+    parameters: dict,
+    organization_id: str | None = None,
+    credential_reference: str | None = None,
+) -> dict:
     """
     Execute tool against integration and return normalized payload.
     """
     ref_id = str(uuid.uuid4())
 
     try:
+        if organization_id and not credential_reference:
+            return {
+                "success": False,
+                "provider_reference": ref_id,
+                "normalized_data": {},
+                "error_code": "CREDENTIAL_REFERENCE_REQUIRED",
+                "error_message": "A resolved credential reference is required",
+            }
+
         if tool_name == "crm.find_customer":
             data = crm_integration.find_customer(parameters)
         elif tool_name == "crm.find_order":
@@ -68,12 +82,12 @@ def dispatch_tool(tool_name: str, parameters: dict) -> dict:
             **data,
         }
 
-    except Exception as e:
-        logger.error(f"Dispatch error for {tool_name}: {e}")
+    except Exception:
+        logger.error("Dispatch error for %s", tool_name)
         return {
             "success": False,
             "provider_reference": ref_id,
             "normalized_data": {},
             "error_code": "EXECUTION_EXCEPTION",
-            "error_message": str(e),
+            "error_message": "Integration execution failed",
         }

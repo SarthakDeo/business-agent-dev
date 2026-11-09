@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 RISK_CONFIRMATION_REQUIRED = {"medium", "high"}
 RISK_BLOCK = {"high"}
+RISK_LEVELS = {"low", "medium", "high"}
 
 
 class HighRiskBlockedError(Exception):
@@ -39,7 +40,9 @@ def evaluate_confirmation(plan: dict) -> dict:
         tool_name = step.get("tool", "unknown")
         
         tool_def = get_tool(tool_name)
-        risk = tool_def.get("risk_level", "low") if tool_def else "low"
+        if not tool_def or tool_def.get("risk_level") not in RISK_LEVELS:
+            raise HighRiskBlockedError(step_id, tool_name)
+        risk = tool_def["risk_level"]
 
         if risk in RISK_BLOCK:
             raise HighRiskBlockedError(step_id, tool_name)

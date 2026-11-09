@@ -66,11 +66,14 @@ def find_order(parameters: dict) -> dict:
     orders = data.get("orders", [])
 
     cid = parameters.get("customer_id")
+    order_id = parameters.get("order_id")
     status = parameters.get("status")
     delayed_days = parameters.get("delayed_more_than_days")
 
     results = []
     for o in orders:
+        if order_id and o.get("order_id") != order_id:
+            continue
         if cid and o.get("customer_id") != cid:
             continue
         if status and o.get("status") != status:

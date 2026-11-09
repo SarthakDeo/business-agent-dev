@@ -6,7 +6,13 @@ Uses Gemini to generate a concise, friendly summary.
 import os
 import json
 import logging
-import google.generativeai as genai
+from dataclasses import dataclass
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +35,42 @@ FALLBACK_MODELS = [
 ]
 
 
+@dataclass
+class ResponseGenerationResult:
+    response_text: str
+    status: str
+    error: str | None = None
+
+
 def generate_response(
     user_message: str,
     plan: dict,
     execution_results: dict,
     pending_confirmations: list[dict] = None,
 ) -> str:
+    return generate_response_result(
+        user_message, plan, execution_results, pending_confirmations
+    ).response_text
+
+
+def generate_response_result(
+    user_message: str,
+    plan: dict,
+    execution_results: dict,
+    pending_confirmations: list[dict] = None,
+) -> ResponseGenerationResult:
     """
     Generate a natural language response for the user with model fallback.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return _fallback_response(plan, execution_results, pending_confirmations)
+    if not api_key or genai is None:
+        return ResponseGenerationResult(
+            _fallback_response(plan, execution_results, pending_confirmations),
+            "fallback",
+            "Gemini response generation is unavailable",
+        )
 
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     summary_prompt = f"""
 User request: "{user_message}"
@@ -61,18 +89,24 @@ Write the response now:
 
     for model_name in FALLBACK_MODELS:
         try:
-            model = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=RESPONSE_SYSTEM_PROMPT,
-                generation_config=genai.GenerationConfig(temperature=0.4),
+            response = client.models.generate_content(
+                model=model_name,
+                contents=summary_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=RESPONSE_SYSTEM_PROMPT,
+                    temperature=0.4,
+                ),
             )
-            response = model.generate_content(summary_prompt)
-            return response.text.strip()
-        except Exception as e:
-            logger.warning(f"Response model {model_name} failed: {e}. Trying fallback...")
+            return ResponseGenerationResult(response.text.strip(), "success")
+        except Exception:
+            logger.warning("Response model %s failed; trying fallback", model_name)
             continue
 
-    return _fallback_response(plan, execution_results, pending_confirmations)
+    return ResponseGenerationResult(
+        _fallback_response(plan, execution_results, pending_confirmations),
+        "fallback",
+        "Gemini response generation failed",
+    )
 
 
 def _fallback_response(plan: dict, results: dict, pending: list) -> str:
@@ -82,7 +116,9 @@ def _fallback_response(plan: dict, results: dict, pending: list) -> str:
     
     if pending:
         tools = [p.get("tool", "action") for p in pending]
-        return f"I've planned to {goal}. The following actions need your approval: {', '.join(tools)}."
+        if mode == "AUTOMATE":
+            return f"I'll create this automation with: {', '.join(tools)}. Please confirm if you want me to proceed."
+        return f"This will perform: {', '.join(tools)}. Please confirm if you want me to proceed."
     
     completed = len(results)
     return f"Done! Completed {completed} step(s) for: {goal}."

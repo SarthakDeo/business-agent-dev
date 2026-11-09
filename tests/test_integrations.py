@@ -9,6 +9,7 @@ from backend.integrations import gmail_integration
 from backend.integrations import slack_integration
 from backend.agent.context_manager import ConversationContext
 from backend.agent.execution_manager import execute_plan
+from backend.integrations import IntegrationManager
 
 
 class TestCrmIntegration:
@@ -97,6 +98,9 @@ class TestDispatcher:
 class TestLiveExecutionManager:
     def test_multi_step_template_execution(self):
         ctx = ConversationContext(user_id="demo-user", org_id="demo-org")
+        manager = ctx.integration_manager
+        manager.connect("demo-org", "crm", "test-crm-secret")
+        manager.connect("demo-org", "slack", "test-slack-secret")
         
         plan = {
             "mode": "DO",
@@ -118,6 +122,7 @@ class TestLiveExecutionManager:
                 }
             ]
         }
+        ctx.approved_step_ids.add("step_2")
 
         # dry_run=False -> runs live integration dispatch
         results = execute_plan(plan, ctx, agent_run_id="run-test-1", dry_run=False)
