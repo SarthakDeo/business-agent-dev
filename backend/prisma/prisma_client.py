@@ -19,7 +19,7 @@ def transcribe(
     language_code: str = "en-IN",
 ) -> str:
     """Send audio bytes to Prisma and return the transcribed text."""
-    api_key = os.environ.get("GNANI_API_KEY")
+    api_key = os.environ.get("VOICE2FLOW_API_KEY") or os.environ.get("GNANI_API_KEY")
     if not api_key:
         raise RuntimeError("Speech-to-text API key not set in environment (VOICE2FLOW_API_KEY or GNANI_API_KEY)")
 

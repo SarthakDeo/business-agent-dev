@@ -10,6 +10,8 @@ from fastapi import Depends, Header, HTTPException, status
 from ..agent.agent import Agent
 from ..agent.context_manager import ConversationContext
 from ..integrations.connection_manager import IntegrationManager
+from ..integrations.n8n_client import N8nClient, N8nConfig
+from ..integrations.n8n_credentials import N8nCredentialProvider
 from ..integrations.postgres_persistence import PostgresPersistenceError, PostgresStateStore
 
 
@@ -62,6 +64,9 @@ def get_tenant_context(
 
 # Global singleton store instance for FastAPI runtime
 _global_state_store: Optional[PostgresStateStore] = None
+_global_n8n_client: Optional[N8nClient] = None
+_n8n_client_set: bool = False
+_global_credential_provider: N8nCredentialProvider = N8nCredentialProvider()
 
 
 def get_state_store() -> PostgresStateStore:
@@ -87,10 +92,48 @@ def set_state_store(store: PostgresStateStore | None) -> None:
     _global_state_store = store
 
 
+def get_n8n_client() -> Optional[N8nClient]:
+    """
+    Returns the configured n8n client, or None if base_url is not configured.
+    Can be overridden via set_n8n_client().
+    """
+    global _global_n8n_client, _n8n_client_set
+    if _n8n_client_set:
+        return _global_n8n_client
+
+    base_url = os.environ.get("N8N_BASE_URL", "http://localhost:5678").strip()
+    api_key = os.environ.get("N8N_API_KEY", "").strip()
+    if base_url:
+        try:
+            return N8nClient(N8nConfig(base_url=base_url, api_key=api_key))
+        except Exception:
+            return None
+    return None
+
+
+def set_n8n_client(client: Optional[N8nClient]) -> None:
+    """Allows test fixtures to inject custom or mock n8n clients."""
+    global _global_n8n_client, _n8n_client_set
+    _global_n8n_client = client
+    _n8n_client_set = True
+
+
+def reset_n8n_client() -> None:
+    """Resets the n8n client to re-evaluate from environment on next access."""
+    global _global_n8n_client, _n8n_client_set
+    _global_n8n_client = None
+    _n8n_client_set = False
+
+
 def get_integration_manager(
-    store: Annotated[PostgresStateStore, Depends(get_state_store)]
+    store: Annotated[PostgresStateStore, Depends(get_state_store)],
+    n8n_client: Annotated[Optional[N8nClient], Depends(get_n8n_client)] = None,
 ) -> IntegrationManager:
-    return IntegrationManager(state_store=store)
+    return IntegrationManager(
+        state_store=store,
+        n8n_client=n8n_client,
+        n8n_credential_provider=_global_credential_provider,
+    )
 
 
 def get_agent(
@@ -148,3 +191,8 @@ def get_active_conversation_context(
 def clear_session_contexts() -> None:
     """Utility for testing teardown."""
     _session_contexts.clear()
+
+
+def clear_credential_mappings() -> None:
+    """Utility for testing teardown."""
+    _global_credential_provider._references.clear()

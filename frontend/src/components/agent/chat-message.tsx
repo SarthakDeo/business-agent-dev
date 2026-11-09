@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bot, User, Cpu, ExternalLink, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Bot, User, Cpu, ExternalLink, AlertCircle, CheckCircle2, Mic } from "lucide-react";
 import { clsx } from "clsx";
 import { ChatMessage as ChatMessageType } from "@/lib/types";
 import { ModeBadge } from "./mode-badge";
@@ -63,6 +63,14 @@ export function ChatMessage({ message }: ChatMessageProps) {
               )}
               <span>{formatRelativeTime(message.timestamp)}</span>
             </div>
+          </div>
+        )}
+
+        {/* User voice tag */}
+        {!isAgent && !isSystem && message.isVoice && (
+          <div className="flex items-center gap-1.5 text-[11px] text-indigo-200 font-semibold mb-1 pb-1 border-b border-indigo-400/30">
+            <Mic className="h-3 w-3 text-indigo-200" />
+            <span>You said (Voice)</span>
           </div>
         )}
 

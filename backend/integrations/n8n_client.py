@@ -93,6 +93,9 @@ class N8nClient:
             raise N8nError("MALFORMED_RESPONSE", "n8n returned no credential ID")
         return response
 
+    def delete_credential(self, credential_id: str) -> dict:
+        return self._rest("DELETE", f"/credentials/{credential_id}")
+
     def _rest(self, method: str, path: str, payload: Optional[dict] = None) -> dict:
         """Route a call through the n8n REST API (all paths are under /api/v1)."""
         return self._request(method, f"/api/v1{path}", payload)

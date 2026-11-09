@@ -1,7 +1,7 @@
 "use client";
 
 import { clsx } from "clsx";
-import { Compass, Zap, Workflow, HelpCircle } from "lucide-react";
+import { Compass, Zap, Workflow, HelpCircle, MessageSquare } from "lucide-react";
 
 interface ModeBadgeProps {
   mode?: string | null;
@@ -22,6 +22,12 @@ export function ModeBadge({
     string,
     { label: string; desc: string; icon: typeof Compass; classes: string }
   > = {
+    CHAT: {
+      label: "CHAT",
+      desc: "Conversational assistant",
+      icon: MessageSquare,
+      classes: "bg-emerald-950/70 text-emerald-400 border-emerald-800/60",
+    },
     ASK: {
       label: "ASK",
       desc: "Reading information",

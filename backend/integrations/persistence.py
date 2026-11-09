@@ -179,6 +179,27 @@ class IntegrationStateStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def delete_credential_reference(self, credential_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM credential_references WHERE id = ?",
+                (credential_id,),
+            )
+            connection.commit()
+            return cursor.rowcount > 0
+
+    def delete_integration_data(self, organization_id: str, integration: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM credential_references WHERE organization_id = ? AND integration = ?",
+                (organization_id, integration),
+            )
+            connection.execute(
+                "DELETE FROM integration_connections WHERE organization_id = ? AND integration = ?",
+                (organization_id, integration),
+            )
+            connection.commit()
+
     def save_connection(self, connection_data: dict):
         with self._connect() as connection:
             connection.execute(
@@ -258,6 +279,15 @@ class IntegrationStateStore:
             item["canonical_workflow"] = json.loads(item["canonical_workflow"])
             results.append(item)
         return results
+
+    def delete_automation(self, organization_id: str, automation_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM automations WHERE organization_id = ? AND id = ?",
+                (organization_id, automation_id),
+            )
+            connection.commit()
+            return cursor.rowcount > 0
 
     def save_conversation_message(
         self, organization_id: str, user_id: str, role: str, content: str,

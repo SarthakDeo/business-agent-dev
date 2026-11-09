@@ -2,6 +2,16 @@
  * TypeScript contracts mirroring Voice2Flow FastAPI responses.
  */
 
+export type VoiceState =
+  | "IDLE"
+  | "LISTENING"
+  | "PROCESSING"
+  | "THINKING"
+  | "CONFIRMATION"
+  | "EXECUTING"
+  | "SUCCESS"
+  | "ERROR";
+
 export interface PendingConfirmationInfo {
   summary: string;
   risk: string;
@@ -21,6 +31,7 @@ export interface ChatMessage {
   pendingConfirmation?: PendingConfirmationInfo | null;
   executionResults?: Record<string, unknown>;
   automationId?: string;
+  isVoice?: boolean;
   error?: string | null;
   errorCode?: string | null;
 }
@@ -50,6 +61,7 @@ export interface AgentConfirmResponse {
 
 export interface AutomationTrigger {
   type: string;
+  tool?: string;
   parameters?: Record<string, unknown>;
 }
 
@@ -95,6 +107,20 @@ export interface IntegrationStatus {
   status: string;
   account_identifier?: string | null;
   connected_at?: string | null;
+  auth_type?: string | null;
+  description?: string | null;
+}
+
+export interface OAuthUrlResponse {
+  url: string;
+  state: string;
+  configured: boolean;
+}
+
+export interface OAuthCallbackPayload {
+  code: string;
+  state: string;
+  redirect_uri?: string;
 }
 
 export interface IntegrationConnectPayload {

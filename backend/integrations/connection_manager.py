@@ -2,7 +2,10 @@
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import logging
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from .credential_manager import CredentialManager, CredentialReference
 from .n8n_client import N8nClient
@@ -133,12 +136,31 @@ class IntegrationManager:
 
     def disconnect(self, organization_id: str, integration: str) -> None:
         connection = self.get_connection(organization_id, integration)
-        self.credentials.revoke_credential(
-            organization_id, connection.credential_reference
-        )
+        cred_ref = connection.credential_reference
+
+        # 1. Clean up n8n credential and mapping
+        if hasattr(self, "n8n_credential_provider") and self.n8n_credential_provider:
+            try:
+                self.n8n_credential_provider.delete_mapping(
+                    organization_id, cred_ref, client=getattr(self, "n8n_client", None)
+                )
+            except Exception as exc:
+                logger.warning(f"Error deleting n8n credential for {integration}: {exc}")
+
+        # 2. Delete secret & credential reference completely from CredentialManager
+        if cred_ref:
+            self.credentials.delete_credential(organization_id, cred_ref)
+
+        # 3. Strip all credential & account data from the connection
+        connection.credential_reference = ""
+        connection.account_identifier = None
         connection.status = "disconnected"
         connection.updated_at = datetime.now(timezone.utc).isoformat()
+
+        # 4. Delete all credential references from database state store
         if self._state_store:
+            if hasattr(self._state_store, "delete_credential_reference") and cred_ref:
+                self._state_store.delete_credential_reference(cred_ref)
             self._state_store.save_connection(asdict(connection))
 
     def resolve_credential_reference(

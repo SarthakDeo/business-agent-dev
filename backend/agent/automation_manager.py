@@ -2,9 +2,12 @@
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import logging
 import re
 from typing import Optional
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from .workflow_compiler import WorkflowCompilationError, WorkflowCompiler, WorkflowValidator
 from .tool_registry import get_tool
@@ -138,7 +141,7 @@ def apply_modification(canonical_workflow: dict, modification: dict) -> dict:
 
 
 def canonical_workflow_from_plan(plan: dict) -> dict:
-    """Convert a validated Agent plan into the existing Phase 5 schema."""
+    """Convert a validated Agent plan into the canonical workflow schema."""
     if not isinstance(plan, dict) or plan.get("mode") != "AUTOMATE":
         raise AutomationCreationError("INVALID_WORKFLOW", "Automation plan must use AUTOMATE mode")
 
@@ -149,6 +152,23 @@ def canonical_workflow_from_plan(plan: dict) -> dict:
             "type": config.get("trigger_type", "webhook"),
             "parameters": deepcopy(config.get("trigger_config") or {}),
         }
+    if isinstance(trigger, dict):
+        tool = trigger.get("tool")
+        if not tool and trigger.get("type") == "webhook":
+            tool = "webhook.received"
+            trigger["tool"] = tool
+        elif tool and not trigger.get("type"):
+            if tool.startswith("schedule."):
+                trigger["type"] = "schedule"
+            elif tool == "webhook.received":
+                trigger["type"] = "webhook"
+            else:
+                trigger["type"] = "event"
+
+        if not isinstance(trigger.get("parameters"), dict):
+            trigger["parameters"] = {}
+        if trigger.get("type") == "webhook" and "path" not in trigger["parameters"]:
+            trigger["parameters"]["path"] = "webhook"
 
     steps = []
     for step in plan.get("steps", []):
@@ -197,7 +217,20 @@ class AutomationManager:
         except WorkflowCompilationError as exc:
             raise AutomationCreationError(exc.code, exc.message) from exc
 
-        integrations = sorted({get_tool(step["tool"])["integration"] for step in workflow["steps"]})
+        step_integrations = {
+            get_tool(step["tool"])["integration"]
+            for step in workflow.get("steps", [])
+            if get_tool(step.get("tool")) and get_tool(step.get("tool")).get("integration")
+        }
+        trigger = workflow.get("trigger", {})
+        trigger_tool_name = trigger.get("tool")
+        trigger_integrations = set()
+        if trigger_tool_name:
+            t_def = get_tool(trigger_tool_name)
+            if t_def and t_def.get("integration") and t_def["integration"] not in ("webhook", "schedule"):
+                trigger_integrations.add(t_def["integration"])
+        integrations = sorted(step_integrations | trigger_integrations)
+
         for integration in integrations:
             try:
                 self.integration_manager.resolve_credential_reference(
@@ -254,7 +287,53 @@ class AutomationManager:
             "message": "Automation created successfully.",
         }
 
+    def delete_automation(self, organization_id: str, automation_id: str) -> dict:
+        record = self.state_store.get_automation(organization_id, automation_id)
+        if not record:
+            raise AutomationNotFoundError(f"Automation '{automation_id}' not found.")
+
+        client = self.n8n_client or getattr(self.integration_manager, "n8n_client", None)
+        n8n_wf_id = record.get("n8n_workflow_id")
+        if client and n8n_wf_id:
+            try:
+                client.delete_workflow(str(n8n_wf_id))
+            except Exception as exc:
+                logger.warning(f"Could not delete n8n workflow {n8n_wf_id}: {exc}")
+
+        deleted = self.state_store.delete_automation(organization_id, automation_id)
+        if not deleted:
+            raise AutomationNotFoundError(f"Automation '{automation_id}' not found.")
+
+        recorder = getattr(self.state_store, "save_audit_event", None)
+        if recorder:
+            try:
+                recorder(
+                    organization_id,
+                    "automation_deleted",
+                    automation_id=automation_id,
+                    workflow_name=record.get("name"),
+                    n8n_workflow_id=n8n_wf_id,
+                )
+            except Exception:
+                pass
+
+        return {
+            "status": "deleted",
+            "automation_id": automation_id,
+            "message": "Automation deleted successfully.",
+        }
+
     def confirmation_summary(self, workflow: dict) -> str:
+        trigger = workflow.get("trigger", {})
+        trigger_tool = trigger.get("tool")
+        if trigger_tool:
+            tool_def = get_tool(trigger_tool)
+            desc = tool_def.get("description", trigger_tool) if tool_def else trigger_tool
+            integration = (tool_def.get("integration") or "").capitalize() if tool_def else ""
+            trigger_display = f"{integration} — {desc}" if integration else desc
+        else:
+            trigger_display = trigger.get("type", "webhook")
+
         actions = []
         for step in workflow.get("steps", []):
             detail = step["tool"]
@@ -269,7 +348,7 @@ class AutomationManager:
         )
         return (
             "I'm about to create this automation:\n\n"
-            f"Trigger: {workflow.get('trigger', {}).get('type', 'webhook')}\n\n"
+            f"Trigger: {trigger_display}\n\n"
             f"Actions:\n{action_lines}\n\n"
             "Create this automation?"
         )

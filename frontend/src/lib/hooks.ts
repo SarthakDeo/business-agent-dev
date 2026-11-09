@@ -14,6 +14,12 @@ export function useSendAgentChat() {
   });
 }
 
+export function useTranscribeAudio() {
+  return useMutation({
+    mutationFn: (audioBlob: Blob) => api.transcribeAudio(audioBlob),
+  });
+}
+
 export function useConfirmAgentAction() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -157,6 +163,18 @@ export function useAutomationDetail(id: string) {
     retry: (failureCount, error) => {
       if (error instanceof Error && error.message.includes("404")) return false;
       return failureCount < 1;
+    },
+  });
+}
+
+export function useDeleteAutomation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteAutomation(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["automations"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["activity"] });
     },
   });
 }

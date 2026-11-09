@@ -1,8 +1,162 @@
 tools:
   # ──────────────────────────────────────────────────────────────
-  # GMAIL TOOLS
+  # EVENT TRIGGERS (Workflow Starters)
+  # ──────────────────────────────────────────────────────────────
+  - name: gmail.email_received
+    kind: trigger
+    description: "Runs when a new email is received in Gmail"
+    integration: gmail
+    event: email_received
+    risk_level: low
+    required_permission: gmail.read
+    n8n_node_type: "n8n-nodes-base.gmailTrigger"
+    n8n_credential_type: "gmailOAuth2"
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: "Optional Gmail search query filter (e.g. 'from:customer', 'subject:support')"
+        read_status:
+          type: string
+          enum: [unread, read, both]
+          default: unread
+          description: "Filter emails by read status"
+    output_schema:
+      type: object
+      properties:
+        from:
+          type: string
+          description: "Sender email address"
+        to:
+          type: string
+          description: "Recipient email address"
+        subject:
+          type: string
+          description: "Email subject line"
+        body:
+          type: string
+          description: "Plain text email body"
+        message_id:
+          type: string
+          description: "Gmail message ID"
+        thread_id:
+          type: string
+          description: "Gmail thread ID"
+        date:
+          type: string
+          description: "Date/time the email was received"
+
+  - name: slack.message_received
+    kind: trigger
+    description: "Runs when a new message is posted in a Slack channel"
+    integration: slack
+    event: message_received
+    risk_level: low
+    required_permission: slack.read
+    n8n_node_type: "n8n-nodes-base.slackTrigger"
+    n8n_credential_type: "slackApi"
+    input_schema:
+      type: object
+      properties:
+        channel:
+          type: string
+          description: "Slack channel name or ID to listen to (e.g. #support, #logistics)"
+    output_schema:
+      type: object
+      properties:
+        channel:
+          type: string
+          description: "Channel where message was posted"
+        user:
+          type: string
+          description: "User who posted the message"
+        text:
+          type: string
+          description: "Message content"
+        ts:
+          type: string
+          description: "Message timestamp"
+
+  - name: schedule.daily
+    kind: trigger
+    description: "Runs on a recurring daily schedule at a specified time"
+    integration: schedule
+    event: scheduled
+    risk_level: low
+    required_permission: automation.schedule
+    n8n_node_type: "n8n-nodes-base.scheduleTrigger"
+    input_schema:
+      type: object
+      properties:
+        hour:
+          type: integer
+          description: "Hour of day (0-23)"
+        minute:
+          type: integer
+          description: "Minute of hour (0-59)"
+    output_schema:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          description: "Execution timestamp"
+
+  - name: schedule.weekly
+    kind: trigger
+    description: "Runs on a recurring weekly schedule on a specified day and time"
+    integration: schedule
+    event: scheduled
+    risk_level: low
+    required_permission: automation.schedule
+    n8n_node_type: "n8n-nodes-base.scheduleTrigger"
+    input_schema:
+      type: object
+      properties:
+        day_of_week:
+          type: string
+          enum: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+          description: "Day of week"
+        hour:
+          type: integer
+          description: "Hour of day (0-23)"
+        minute:
+          type: integer
+          description: "Minute of hour (0-59)"
+    output_schema:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          description: "Execution timestamp"
+
+  - name: webhook.received
+    kind: trigger
+    description: "Runs when an external HTTP POST request is received on a custom webhook URL"
+    integration: webhook
+    event: webhook_received
+    risk_level: low
+    required_permission: webhook.receive
+    n8n_node_type: "n8n-nodes-base.webhook"
+    input_schema:
+      type: object
+      additionalProperties: true
+      properties:
+        path:
+          type: string
+          description: "Unique webhook URL path slug"
+    output_schema:
+      type: object
+      properties:
+        body:
+          type: object
+          description: "Webhook JSON payload"
+
+  # ──────────────────────────────────────────────────────────────
+  # GMAIL ACTIONS
   # ──────────────────────────────────────────────────────────────
   - name: gmail.search
+    kind: query
     description: "Search and read permitted Gmail messages"
     integration: gmail
     risk_level: low
@@ -35,7 +189,8 @@ tools:
         count: { type: integer }
 
   - name: gmail.send
-    description: "Send an email via Gmail"
+    kind: action
+    description: "Send an email or reply to an email via Gmail"
     integration: gmail
     risk_level: medium
     required_permission: gmail.send
@@ -55,6 +210,12 @@ tools:
         cc:
           type: string
           description: "CC email address (optional)"
+        thread_id:
+          type: string
+          description: "Gmail thread ID to reply within an existing thread"
+        message_id:
+          type: string
+          description: "Gmail message ID being replied to"
       required: [to, subject, body]
     output_schema:
       type: object

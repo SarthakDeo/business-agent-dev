@@ -5,7 +5,7 @@ Validates tool call parameters against the Tool Registry input schemas.
 import logging
 import re
 from jsonschema import validate, ValidationError as JsonSchemaValidationError
-from .tool_registry import get_tool, tool_exists
+from .tool_registry import get_tool, tool_exists, is_trigger_tool
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def validate_agent_plan(plan: dict) -> dict:
     """Validate the top-level structure before tool selection or execution."""
     if not isinstance(plan, dict):
         raise ValidationError("plan", "unknown", "Plan must be an object")
-    if plan.get("mode") not in ("ASK", "DO", "AUTOMATE"):
+    if plan.get("mode") not in ("CHAT", "ASK", "DO", "AUTOMATE"):
         raise ValidationError("plan", "unknown", "Invalid plan mode")
     if not isinstance(plan.get("goal"), str) or not plan["goal"].strip():
         raise ValidationError("plan", "unknown", "Plan goal must be a non-empty string")
@@ -48,6 +48,10 @@ def validate_agent_plan(plan: dict) -> dict:
     if supplied_context_fields:
         raise ValidationError("plan", "unknown", "Plan cannot supply runtime security context")
 
+    if plan.get("mode") == "CHAT" or plan.get("clarification_needed"):
+        plan.setdefault("steps", [])
+        return plan
+
     is_modify = plan.get("mode") == "AUTOMATE" and plan.get("operation") == "MODIFY"
     if is_modify:
         if not plan.get("target_automation"):
@@ -55,6 +59,38 @@ def validate_agent_plan(plan: dict) -> dict:
         if not isinstance(plan.get("modification"), dict):
             raise ValidationError("plan", "unknown", "AUTOMATE MODIFY requires modification object")
         return plan
+
+    # Validate trigger for AUTOMATE CREATE plans
+    if plan.get("mode") == "AUTOMATE":
+        trigger = plan.get("trigger")
+        if trigger is None and plan.get("automation_config"):
+            config = plan["automation_config"]
+            trigger = {
+                "type": config.get("trigger_type", "webhook"),
+                "parameters": config.get("trigger_config") or {},
+            }
+            plan["trigger"] = trigger
+
+        if not isinstance(trigger, dict):
+            raise ValidationError("plan", "unknown", "AUTOMATE requires a trigger object")
+        trigger_tool = trigger.get("tool")
+        if trigger_tool:
+            if not tool_exists(trigger_tool):
+                raise ValidationError("trigger", trigger_tool, f"Trigger tool '{trigger_tool}' is not registered")
+            if not is_trigger_tool(trigger_tool):
+                raise ValidationError("trigger", trigger_tool, f"Action tool '{trigger_tool}' cannot be used as a trigger")
+            tool_def = get_tool(trigger_tool)
+            trigger_params = trigger.get("parameters", {})
+            if not isinstance(trigger_params, dict):
+                raise ValidationError("trigger", trigger_tool, "Trigger parameters must be an object")
+            if tool_def and "input_schema" in tool_def:
+                input_schema = tool_def["input_schema"]
+                if trigger_tool != "webhook.received" and trigger.get("type") != "webhook":
+                    _reject_unknown_parameters(trigger_params, input_schema, "trigger", trigger_tool)
+                try:
+                    validate(instance=trigger_params, schema=input_schema)
+                except JsonSchemaValidationError as e:
+                    raise ValidationError("trigger", trigger_tool, e.message) from e
 
     steps = plan.get("steps")
     if not isinstance(steps, list) or not steps:
@@ -78,6 +114,8 @@ def validate_agent_plan(plan: dict) -> dict:
             raise ValidationError(step_id, "unknown", "Step tool must be a string")
         if not tool_exists(step["tool"]):
             raise ValidationError(step_id, step["tool"], "Tool is not registered")
+        if is_trigger_tool(step["tool"]):
+            raise ValidationError(step_id, step["tool"], f"Trigger tool '{step['tool']}' cannot be used as an action step")
         if not isinstance(step.get("parameters", {}), dict):
             raise ValidationError(step_id, step.get("tool", "unknown"), "Parameters must be an object")
     return plan

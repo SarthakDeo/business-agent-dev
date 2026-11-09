@@ -157,6 +157,8 @@ class Agent:
             )
 
         mode = agent_plan.get("mode")
+        if mode == "CHAT":
+            return self._handle_chat(run_id, agent_plan, context)
         if mode == "ASK":
             return self._handle_ask(run_id, user_message, agent_plan, context, user_permissions, dry_run)
         if mode == "DO":
@@ -165,6 +167,38 @@ class Agent:
             return self._handle_automate(run_id, agent_plan, context, user_permissions)
         return self._error_response(
             run_id, "Unsupported request mode", "Invalid mode", error_code="INVALID_MODE"
+        )
+
+    def _handle_chat(
+        self, run_id: str, agent_plan: dict, context: ConversationContext
+    ) -> AgentResponse:
+        response_text = (
+            agent_plan.get("response_text")
+            or agent_plan.get("goal")
+            or "Hello! How can I help you today?"
+        )
+        context.add_agent_message(response_text)
+        try:
+            self._audit(
+                context,
+                "AGENT_RESPONSE",
+                mode="CHAT",
+                status="completed",
+                metadata={"response_length": len(response_text)},
+            )
+        except Exception:
+            return self._error_response(
+                run_id, "Persistence is unavailable", "Response could not be recorded",
+                error_code="DATABASE_UNAVAILABLE",
+            )
+        return AgentResponse(
+            response_text=response_text,
+            mode="CHAT",
+            plan=agent_plan,
+            execution_results={},
+            pending_confirmations=[],
+            status="completed",
+            run_id=run_id,
         )
 
     def _handle_ask(

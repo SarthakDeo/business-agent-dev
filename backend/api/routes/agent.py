@@ -1,7 +1,8 @@
 """Agent interaction routes for chat and confirmation handling."""
 
+import logging
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from ..dependencies import (
     TenantContext,
@@ -16,10 +17,13 @@ from ..schemas import (
     AgentChatResponse,
     AgentConfirmRequest,
     AgentConfirmResponse,
+    AgentTranscribeResponse,
     PendingConfirmationInfo,
 )
 from ...agent.agent import Agent
 from ...integrations.connection_manager import IntegrationManager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent", tags=["Agent"])
 
@@ -95,3 +99,47 @@ def confirm(
         error=result.error,
         error_code=result.error_code,
     )
+
+
+@router.post("/transcribe", response_model=AgentTranscribeResponse)
+async def transcribe_speech(
+    file: UploadFile = File(...),
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)] = None,
+) -> AgentTranscribeResponse:
+    """Transcribe browser microphone audio using the Voice2Flow Prisma STT engine."""
+    if not file:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No audio file received.",
+        )
+
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Audio recording was empty. Please speak again.",
+        )
+
+    try:
+        from ...prisma import transcribe
+        transcript = transcribe(audio_bytes, filename=file.filename or "recording.wav")
+        if not transcript or not transcript.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Could not detect clear speech in the audio. Please speak naturally and try again.",
+            )
+        return AgentTranscribeResponse(transcript=transcript.strip())
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        logger.warning("Prisma transcription runtime error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Speech recognition service is temporarily unavailable. You can use text input instead.",
+        )
+    except Exception as exc:
+        logger.error("Unexpected error in audio transcription: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to transcribe audio. You can use text input instead.",
+        )

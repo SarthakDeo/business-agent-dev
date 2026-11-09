@@ -2,9 +2,13 @@
 
 import logging
 from uuid import uuid4
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+# Load environment configuration on startup
+load_dotenv()
 
 from .routes import (
     activity_router,

@@ -61,6 +61,19 @@ export const api = {
   },
 
   // ─── AGENT ───────────────────────────────────────────────
+  async transcribeAudio(audioBlob: Blob): Promise<{ transcript: string }> {
+    const formData = new FormData();
+    formData.append("file", audioBlob, "recording.wav");
+    const headers = getTenantHeaders();
+    delete headers["Content-Type"];
+    const res = await fetch(`${API_BASE_URL}/api/agent/transcribe`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    return handleResponse<{ transcript: string }>(res);
+  },
+
   async sendAgentChat(message: string, conversationId?: string): Promise<AgentChatResponse> {
     const res = await fetch(`${API_BASE_URL}/api/agent/chat`, {
       method: "POST",
@@ -94,12 +107,41 @@ export const api = {
     return handleResponse<AutomationDetail>(res);
   },
 
+  async deleteAutomation(id: string): Promise<{ status: string; automation_id: string; message: string }> {
+    const res = await fetch(`${API_BASE_URL}/api/automations/${id}`, {
+      method: "DELETE",
+      headers: getTenantHeaders(),
+    });
+    return handleResponse<{ status: string; automation_id: string; message: string }>(res);
+  },
+
   // ─── INTEGRATIONS ────────────────────────────────────────
   async listIntegrations(): Promise<IntegrationStatus[]> {
     const res = await fetch(`${API_BASE_URL}/api/integrations`, {
       headers: getTenantHeaders(),
     });
     return handleResponse<IntegrationStatus[]>(res);
+  },
+
+  async getGmailOAuthUrl(redirectUri?: string): Promise<{ url: string; state: string; configured: boolean }> {
+    const query = redirectUri ? `?redirect_uri=${encodeURIComponent(redirectUri)}` : "";
+    const res = await fetch(`${API_BASE_URL}/api/integrations/gmail/oauth/url${query}`, {
+      headers: getTenantHeaders(),
+    });
+    return handleResponse<{ url: string; state: string; configured: boolean }>(res);
+  },
+
+  async submitGmailOAuthCallback(
+    code: string,
+    state: string,
+    redirectUri?: string
+  ): Promise<IntegrationConnectResult> {
+    const res = await fetch(`${API_BASE_URL}/api/integrations/gmail/oauth/callback`, {
+      method: "POST",
+      headers: getTenantHeaders(),
+      body: JSON.stringify({ code, state, redirect_uri: redirectUri }),
+    });
+    return handleResponse<IntegrationConnectResult>(res);
   },
 
   async connectIntegration(

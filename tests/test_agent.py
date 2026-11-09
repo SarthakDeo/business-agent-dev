@@ -417,3 +417,212 @@ class TestPhase2Hardening:
 
         assert result.status == "error"
         assert "failed" in result.response_text.lower()
+
+
+class TestChatAndAutomateValidation:
+    """Tests for CHAT mode, clarification handling, and AUTOMATE validation parity."""
+
+    def test_chat_mode_plan_and_execution(self):
+        from backend.agent.agent import Agent
+        from backend.agent.context_manager import ConversationContext
+        from backend.agent.validator import validate_agent_plan
+
+        chat_plan = {
+            "mode": "CHAT",
+            "goal": "Greeting",
+            "response_text": "Hello! How can I help you automate your business tasks today?",
+            "steps": [],
+            "requires_confirmation": False,
+        }
+        # Step validation allows empty steps for CHAT
+        validated = validate_agent_plan(chat_plan)
+        assert validated["mode"] == "CHAT"
+        assert validated["steps"] == []
+
+        agent = Agent()
+        context = ConversationContext("user_chat", "org_chat")
+        with patch("backend.agent.agent.plan", return_value=chat_plan):
+            resp = agent.run("Hello!", context, user_permissions=[])
+
+        assert resp.mode == "CHAT"
+        assert resp.status == "completed"
+        assert "Hello! How can I help" in resp.response_text
+        assert resp.plan["steps"] == []
+
+    def test_unsupported_capability_chat_response(self):
+        from backend.agent.agent import Agent
+        from backend.agent.context_manager import ConversationContext
+        from backend.agent.validator import validate_agent_plan
+
+        unsupported_plan = {
+            "mode": "CHAT",
+            "goal": "Reply to incoming phone calls",
+            "response_text": (
+                "Incoming phone-call triggers are not currently supported. "
+                "Voice2Flow currently supports Gmail, Slack, CRM, WhatsApp, and Calendar."
+            ),
+            "steps": [],
+            "requires_confirmation": False,
+        }
+        validated = validate_agent_plan(unsupported_plan)
+        assert validated["mode"] == "CHAT"
+
+        agent = Agent()
+        context = ConversationContext("user_chat", "org_chat")
+        with patch("backend.agent.agent.plan", return_value=unsupported_plan):
+            resp = agent.run("Reply to incoming calls", context, user_permissions=[])
+
+        assert resp.mode == "CHAT"
+        assert resp.status == "completed"
+        assert "not currently supported" in resp.response_text
+
+    def test_clarification_needed_allows_empty_steps(self):
+        from backend.agent.agent import Agent
+        from backend.agent.context_manager import ConversationContext
+        from backend.agent.validator import validate_agent_plan
+
+        clarify_plan = {
+            "mode": "AUTOMATE",
+            "goal": "Handle incoming voice calls",
+            "clarification_needed": True,
+            "clarification_question": "Direct phone call triggers are not supported. Would you like to use Gmail instead?",
+            "steps": [],
+            "requires_confirmation": True,
+        }
+        validated = validate_agent_plan(clarify_plan)
+        assert validated["clarification_needed"] is True
+        assert validated["steps"] == []
+
+        agent = Agent()
+        context = ConversationContext("user_clarify", "org_clarify")
+        with patch("backend.agent.agent.plan", return_value=clarify_plan):
+            resp = agent.run("When I get a call", context, user_permissions=[])
+
+        assert resp.status == "clarification_needed"
+        assert "Direct phone call triggers are not supported" in resp.response_text
+
+    def test_strict_validation_preserved_for_standard_modes(self):
+        from backend.agent.validator import validate_agent_plan, ValidationError
+
+        # ASK must have non-empty steps
+        with pytest.raises(ValidationError, match="Plan steps must be a non-empty list"):
+            validate_agent_plan({"mode": "ASK", "goal": "Find order", "steps": []})
+
+        # DO must have non-empty steps
+        with pytest.raises(ValidationError, match="Plan steps must be a non-empty list"):
+            validate_agent_plan({"mode": "DO", "goal": "Send email", "steps": []})
+
+        # AUTOMATE CREATE must have non-empty steps
+        with pytest.raises(ValidationError, match="Plan steps must be a non-empty list"):
+            validate_agent_plan({
+                "mode": "AUTOMATE",
+                "operation": "CREATE",
+                "goal": "Auto notify",
+                "trigger": {"type": "webhook"},
+                "steps": [],
+            })
+
+    def test_supported_automate_gmail_to_slack_flow(self):
+        from backend.agent.agent import Agent
+        from backend.agent.context_manager import ConversationContext
+        from backend.agent.validator import validate_agent_plan
+        from backend.agent.automation_manager import canonical_workflow_from_plan
+
+        gmail_slack_plan = {
+            "mode": "AUTOMATE",
+            "operation": "CREATE",
+            "name": "Gmail to Slack Support Alert",
+            "goal": "Whenever I receive a new email, send a notification to Slack",
+            "requires_confirmation": False,
+            "trigger": {
+                "type": "webhook",
+                "parameters": {"path": "new-email"},
+            },
+            "steps": [
+                {
+                    "id": "step_1",
+                    "tool": "slack.send_message",
+                    "parameters": {
+                        "channel": "#support",
+                        "message": "New email received from {{trigger.sender}}",
+                    },
+                    "description": "Send notification to Slack",
+                }
+            ],
+        }
+
+        validated = validate_agent_plan(gmail_slack_plan)
+        assert validated["mode"] == "AUTOMATE"
+        assert len(validated["steps"]) == 1
+
+        canonical = canonical_workflow_from_plan(validated)
+        assert canonical["mode"] == "AUTOMATE"
+        assert canonical["trigger"]["type"] == "webhook"
+        assert canonical["steps"][0]["tool"] == "slack.send_message"
+
+    def test_voice_and_text_parity(self, tmp_path):
+        from backend.agent.agent import Agent
+        from backend.agent.context_manager import ConversationContext
+        from backend.integrations import IntegrationManager, IntegrationStateStore
+
+        shared_plan = {
+            "mode": "AUTOMATE",
+            "operation": "CREATE",
+            "name": "Email to Slack Alert",
+            "goal": "Whenever I receive a new email, send a notification to Slack",
+            "requires_confirmation": False,
+            "trigger": {"type": "webhook", "parameters": {"path": "new-email"}},
+            "steps": [
+                {
+                    "id": "step_1",
+                    "tool": "slack.send_message",
+                    "parameters": {"channel": "#support", "message": "New email alert"},
+                }
+            ],
+        }
+
+        def make_agent(db_name):
+            mgr = IntegrationManager(state_store=IntegrationStateStore(tmp_path / db_name))
+            slack_conn = mgr.connect("org_parity", "slack", "TEST_SECRET_SLACK")
+            mock_n8n = MagicMock()
+            mock_n8n.create_workflow.return_value = {"id": "n8n-wf-1"}
+            mgr.n8n_client = mock_n8n
+            mgr.n8n_credential_provider.register_mapping(
+                "org_parity", slack_conn.credential_reference, "n8n-slack-1", "slack"
+            )
+            return Agent(mgr), mgr
+
+        # 1. Direct text run
+        text_agent, text_mgr = make_agent("text.sqlite3")
+        text_context = ConversationContext("user_parity", "org_parity", integration_manager=text_mgr)
+        with patch("backend.agent.agent.plan", return_value=shared_plan):
+            text_resp = text_agent.run(
+                "Whenever I receive a new email, send a notification to Slack",
+                text_context,
+                user_permissions=["slack.send"],
+            )
+
+        # 2. Voice transcript simulation (Prisma STT produces the same text transcript)
+        voice_transcript = "Whenever I receive a new email, send a notification to Slack"
+        voice_agent, voice_mgr = make_agent("voice.sqlite3")
+        voice_context = ConversationContext("user_parity", "org_parity", integration_manager=voice_mgr)
+        with patch("backend.agent.agent.plan", return_value=shared_plan):
+            voice_resp = voice_agent.run(
+                voice_transcript,
+                voice_context,
+                user_permissions=["slack.send"],
+            )
+
+        assert text_resp.mode == voice_resp.mode == "AUTOMATE"
+        assert text_resp.status == voice_resp.status == "awaiting_confirmation"
+        assert len(text_resp.plan["steps"]) == len(voice_resp.plan["steps"]) == 1
+
+        # Now confirm both
+        text_confirm = text_agent.resume_confirmation(text_context, approved=True)
+        voice_confirm = voice_agent.resume_confirmation(voice_context, approved=True)
+
+        assert text_confirm.mode == voice_confirm.mode == "AUTOMATE"
+        assert text_confirm.status == voice_confirm.status == "completed"
+        assert "n8n-wf-1" in str(text_confirm.execution_results)
+        assert "n8n-wf-1" in str(voice_confirm.execution_results)
+

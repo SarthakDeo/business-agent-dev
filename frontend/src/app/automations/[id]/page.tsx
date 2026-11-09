@@ -1,9 +1,10 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Workflow, Clock, Hash, Bot, Sparkles, Building2, ExternalLink } from "lucide-react";
-import { useAutomationDetail } from "@/lib/hooks";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Workflow, Clock, Hash, Bot, Sparkles, Building2, ExternalLink, Trash2, AlertTriangle, Loader2 } from "lucide-react";
+import { useAutomationDetail, useDeleteAutomation } from "@/lib/hooks";
 import { AutomationStatusBadge } from "@/components/automations/automation-status";
 import { AutomationWorkflowTimeline } from "@/components/automations/automation-workflow";
 import { ErrorMessage } from "@/components/agent/error-message";
@@ -14,7 +15,19 @@ interface PageProps {
 
 export default function AutomationDetailPage({ params }: PageProps) {
   const { id } = use(params);
+  const router = useRouter();
   const { data: automation, isLoading, error, refetch } = useAutomationDetail(id);
+  const deleteMutation = useDeleteAutomation();
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+
+  const handleDelete = async () => {
+    try {
+      await deleteMutation.mutateAsync(id);
+      router.push("/automations");
+    } catch {
+      // error is captured by deleteMutation.error
+    }
+  };
 
   const is404 =
     error instanceof Error &&
@@ -46,7 +59,7 @@ export default function AutomationDetailPage({ params }: PageProps) {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Back Button & Top Navigation */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <Link
           href="/automations"
           className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
@@ -56,15 +69,58 @@ export default function AutomationDetailPage({ params }: PageProps) {
         </Link>
 
         {automation && (
-          <Link
-            href={`/agent?prompt=Modify automation ${automation.name} to `}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-colors"
-          >
-            <Bot className="h-3.5 w-3.5" />
-            <span>Modify with Voice2Flow</span>
-          </Link>
+          <div className="flex items-center gap-2.5">
+            {showConfirmDelete ? (
+              <div className="flex items-center gap-2 bg-red-950/40 border border-red-500/40 rounded-xl px-3 py-1.5 animate-fadeIn">
+                <span className="text-xs text-red-300 font-medium">Delete permanently?</span>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteMutation.isPending}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-semibold disabled:opacity-50 transition-colors"
+                >
+                  {deleteMutation.isPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
+                  <span>{deleteMutation.isPending ? "Deleting..." : "Yes, Delete"}</span>
+                </button>
+                <button
+                  onClick={() => setShowConfirmDelete(false)}
+                  disabled={deleteMutation.isPending}
+                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowConfirmDelete(true)}
+                title="Delete this automation from Voice2Flow and n8n"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-semibold transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete</span>
+              </button>
+            )}
+
+            <Link
+              href={`/agent?prompt=Modify automation ${automation.name} to `}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-colors"
+            >
+              <Bot className="h-3.5 w-3.5" />
+              <span>Modify with Voice2Flow</span>
+            </Link>
+          </div>
         )}
       </div>
+
+      {deleteMutation.error && (
+        <div className="rounded-xl bg-red-950/40 border border-red-500/40 p-3.5 text-xs text-red-300 flex items-center gap-2.5">
+          <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
+          <span>Failed to delete automation: {deleteMutation.error.message}</span>
+        </div>
+      )}
 
       {/* Loading Skeleton */}
       {isLoading && (

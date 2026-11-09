@@ -91,6 +91,14 @@ class CredentialManager:
             )
 
     def delete_credential(self, organization_id: str, credential_id: str) -> None:
-        self.get_credential_reference(organization_id, credential_id)
+        try:
+            self.get_credential_reference(organization_id, credential_id)
+        except Exception:
+            pass
         self._references.pop(credential_id, None)
         self._secrets.pop(credential_id, None)
+        if self._state_store and hasattr(self._state_store, "delete_credential_reference"):
+            try:
+                self._state_store.delete_credential_reference(credential_id)
+            except Exception:
+                pass

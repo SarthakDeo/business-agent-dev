@@ -125,6 +125,25 @@ class PostgresStateStore:
             )
             return cursor.fetchone()
 
+    def delete_credential_reference(self, credential_id: str) -> bool:
+        with self._connect() as (_, cursor):
+            cursor.execute(
+                "DELETE FROM gnani_credential_references WHERE id = %s",
+                (credential_id,),
+            )
+            return cursor.rowcount > 0
+
+    def delete_integration_data(self, organization_id: str, integration: str) -> None:
+        with self._connect() as (_, cursor):
+            cursor.execute(
+                "DELETE FROM gnani_credential_references WHERE organization_id = %s AND integration = %s",
+                (organization_id, integration),
+            )
+            cursor.execute(
+                "DELETE FROM gnani_integration_connections WHERE organization_id = %s AND integration = %s",
+                (organization_id, integration),
+            )
+
     def save_connection(self, connection_data: dict):
         with self._connect() as (_, cursor):
             cursor.execute(
@@ -187,6 +206,14 @@ class PostgresStateStore:
                 (organization_id,),
             )
             return cursor.fetchall()
+
+    def delete_automation(self, organization_id: str, automation_id: str) -> bool:
+        with self._connect() as (_, cursor):
+            cursor.execute(
+                "DELETE FROM gnani_automations WHERE organization_id = %s AND id = %s",
+                (organization_id, automation_id),
+            )
+            return cursor.rowcount > 0
 
     def save_conversation_message(self, organization_id: str, user_id: str, role: str, content: str, conversation_id: str | None = None, mode: str | None = None, metadata: dict | None = None):
         now = datetime.now(timezone.utc).isoformat()

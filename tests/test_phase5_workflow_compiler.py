@@ -94,7 +94,7 @@ def test_compiler_resolves_real_n8n_credential_ids_when_client_is_configured():
     compiled = WorkflowCompiler(manager).compile(canonical_workflow(), "org-a")
 
     assert compiled["credential_references"] == {"crm": "n8n-crm-1", "slack": "n8n-slack-1"}
-    assert compiled["nodes"][1]["credentials"]["crm"]["id"] == "n8n-crm-1"
+    assert compiled["nodes"][1]["credentials"]["httpHeaderAuth"]["id"] == "n8n-crm-1"
     assert compiled["nodes"][2]["credentials"]["slackApi"]["id"] == "n8n-slack-1"
 
 

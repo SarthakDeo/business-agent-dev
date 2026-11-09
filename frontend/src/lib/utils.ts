@@ -96,6 +96,7 @@ export function getIntegrationMetadata(key: string): {
   category: string;
   description: string;
   authTypeLabel: string;
+  providerAuth: "oauth2" | "bot_token" | "api_key" | "secret";
   secretPlaceholder: string;
   secretHelp: string;
 } {
@@ -105,31 +106,35 @@ export function getIntegrationMetadata(key: string): {
       return {
         category: "Communication",
         description: "Send automated alerts, customer follow-ups, and notifications via Gmail.",
-        authTypeLabel: "OAuth2 / App Password",
-        secretPlaceholder: "Enter OAuth access token or Google App Password...",
-        secretHelp: "Credentials are held securely by Voice2Flow's CredentialManager and auto-provisioned into n8n as opaque references.",
+        authTypeLabel: "Google OAuth 2.0",
+        providerAuth: "oauth2",
+        secretPlaceholder: "Paste OAuth tokens JSON or access token...",
+        secretHelp: "Connect directly with Google OAuth 2.0. Tokens are encrypted in CredentialManager and provisioned into n8n under gmailOAuth2.",
       };
     case "slack":
       return {
         category: "Communication",
         description: "Post messages, channel notifications, and approval alerts to Slack workspaces.",
-        authTypeLabel: "OAuth2 / Bot Token",
-        secretPlaceholder: "xoxb-... or Slack Bot User OAuth Token",
-        secretHelp: "Your Slack token is stored securely in-memory and provisioned into n8n via opaque references.",
+        authTypeLabel: "Bot User OAuth Token",
+        providerAuth: "bot_token",
+        secretPlaceholder: "xoxb-... (Bot User OAuth Token)",
+        secretHelp: "Enter your Slack Bot Token (starts with xoxb-). Requires chat:write and channels:read scopes. Provisioned into n8n as slackApi.",
       };
     case "crm":
       return {
         category: "Business & CRM",
         description: "Read and write customer contacts, orders, and support tickets in your CRM.",
-        authTypeLabel: "API Key",
-        secretPlaceholder: "Enter CRM API key or personal access token...",
-        secretHelp: "Your API key is stored securely in-memory and never exposed in the browser or database.",
+        authTypeLabel: "Internal API Key",
+        providerAuth: "api_key",
+        secretPlaceholder: "Enter CRM API key (e.g. demo-crm-api-key)...",
+        secretHelp: "Voice2Flow Built-in Demo CRM API key. Provisioned into n8n as httpHeaderAuth with header X-API-Key.",
       };
     default:
       return {
         category: "Services",
         description: "Connect external tools and services to Voice2Flow.",
         authTypeLabel: "API Secret",
+        providerAuth: "secret",
         secretPlaceholder: "Enter credential secret...",
         secretHelp: "Credentials are bound to opaque references and stored securely.",
       };

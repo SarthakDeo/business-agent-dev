@@ -1,6 +1,6 @@
 "use client";
 
-import { Webhook, Clock, Zap, ArrowDown } from "lucide-react";
+import { Webhook, Clock, Zap, ArrowDown, Mail, MessageSquare } from "lucide-react";
 import { AutomationTrigger as AutomationTriggerType } from "@/lib/types";
 import { sanitizeParameters } from "@/lib/utils";
 
@@ -10,22 +10,57 @@ interface AutomationTriggerProps {
 
 export function AutomationTriggerCard({ trigger }: AutomationTriggerProps) {
   const triggerType = (trigger?.type || "webhook").toLowerCase();
+  const triggerTool = trigger?.tool || "";
 
-  const getTriggerIcon = () => {
+  const getTriggerMeta = () => {
+    if (triggerTool === "gmail.email_received") {
+      return {
+        icon: Mail,
+        title: "Gmail — Incoming Email Received",
+        badge: "Gmail Event",
+      };
+    }
+    if (triggerTool === "slack.message_received") {
+      return {
+        icon: MessageSquare,
+        title: "Slack — New Message Received",
+        badge: "Slack Event",
+      };
+    }
+    if (triggerTool === "schedule.daily") {
+      return {
+        icon: Clock,
+        title: "Schedule — Daily Trigger",
+        badge: "Daily Schedule",
+      };
+    }
+    if (triggerTool === "schedule.weekly") {
+      return {
+        icon: Clock,
+        title: "Schedule — Weekly Trigger",
+        badge: "Weekly Schedule",
+      };
+    }
+    if (triggerTool === "webhook.received" || triggerType === "webhook") {
+      return {
+        icon: Webhook,
+        title: "HTTP Webhook Trigger",
+        badge: "Webhook",
+      };
+    }
     switch (triggerType) {
       case "cron":
       case "schedule":
       case "interval":
-        return Clock;
+        return { icon: Clock, title: `${triggerType} Trigger`, badge: triggerType.toUpperCase() };
       case "event":
-        return Zap;
-      case "webhook":
+        return { icon: Zap, title: `${triggerTool || "Event"} Trigger`, badge: "EVENT" };
       default:
-        return Webhook;
+        return { icon: Webhook, title: `${triggerType} Trigger`, badge: triggerType.toUpperCase() };
     }
   };
 
-  const Icon = getTriggerIcon();
+  const { icon: Icon, title, badge } = getTriggerMeta();
   const sanitizedParams = sanitizeParameters(trigger?.parameters);
 
   return (
@@ -41,13 +76,13 @@ export function AutomationTriggerCard({ trigger }: AutomationTriggerProps) {
                 Workflow Trigger
               </span>
               <h4 className="text-sm font-bold text-white capitalize">
-                {triggerType} Trigger
+                {title}
               </h4>
             </div>
           </div>
 
           <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/40 uppercase">
-            Type: {triggerType}
+            {badge}
           </span>
         </div>
 

@@ -8,7 +8,7 @@ from jsonschema import ValidationError as JsonSchemaValidationError
 from jsonschema import validate as validate_schema
 
 from ..integrations import IntegrationManager
-from .tool_registry import get_tool
+from .tool_registry import get_tool, is_trigger_tool, tool_exists
 
 
 class WorkflowCompilationError(Exception):
@@ -24,11 +24,59 @@ class WorkflowValidationError(WorkflowCompilationError):
     """Raised when canonical workflow input is invalid."""
 
 
+class TriggerNodeMapping:
+    def __init__(
+        self,
+        node_type: str,
+        credential_key: Optional[str] = None,
+        event: Optional[str] = None,
+        type_version: int = 1,
+    ):
+        self.node_type = node_type
+        self.credential_key = credential_key
+        self.event = event
+        self.type_version = type_version
+
+
+TRIGGER_NODE_MAPPINGS = {
+    "gmail.email_received": TriggerNodeMapping(
+        node_type="n8n-nodes-base.gmailTrigger",
+        credential_key="gmailOAuth2",
+        event="messageReceived",
+        type_version=1,
+    ),
+    "slack.message_received": TriggerNodeMapping(
+        node_type="n8n-nodes-base.slackTrigger",
+        credential_key="slackApi",
+        event="message",
+        type_version=1,
+    ),
+    "schedule.daily": TriggerNodeMapping(
+        node_type="n8n-nodes-base.scheduleTrigger",
+        credential_key=None,
+        event="schedule",
+        type_version=1,
+    ),
+    "schedule.weekly": TriggerNodeMapping(
+        node_type="n8n-nodes-base.scheduleTrigger",
+        credential_key=None,
+        event="schedule",
+        type_version=1,
+    ),
+    "webhook.received": TriggerNodeMapping(
+        node_type="n8n-nodes-base.webhook",
+        credential_key=None,
+        event="webhook",
+        type_version=2,
+    ),
+}
+
+
 class WorkflowValidator:
     """Validate the canonical workflow without performing integration I/O."""
 
     _reference_pattern = re.compile(r"\{\{([^{}]+)\}\}")
-    _valid_trigger_types = {"webhook"}
+    _valid_trigger_types = {"webhook", "event", "schedule"}
     _secret_keys = {
         "secret", "token", "password", "api_key", "apikey", "access_token",
         "credential", "credential_id", "authorization", "headers",
@@ -43,10 +91,32 @@ class WorkflowValidator:
         trigger = workflow.get("trigger")
         if not isinstance(trigger, dict):
             self._fail("Exactly one trigger is required", "INVALID_WORKFLOW")
-        if trigger.get("type") not in self._valid_trigger_types:
-            self._fail("Unsupported workflow trigger", "INVALID_WORKFLOW")
-        if not isinstance(trigger.get("parameters", {}), dict):
-            self._fail("Trigger parameters must be an object", "INVALID_PARAMETER")
+
+        trigger_tool = trigger.get("tool")
+        if trigger_tool:
+            if not tool_exists(trigger_tool):
+                self._fail(f"Trigger tool '{trigger_tool}' is not registered", "UNKNOWN_TOOL")
+            if not is_trigger_tool(trigger_tool):
+                self._fail(f"Tool '{trigger_tool}' cannot be used as a trigger", "INVALID_TRIGGER")
+            if trigger_tool not in TRIGGER_NODE_MAPPINGS:
+                self._fail(f"Trigger tool '{trigger_tool}' is not supported by the compiler", "UNSUPPORTED_TRIGGER")
+            tool = get_tool(trigger_tool)
+            trigger_params = trigger.get("parameters", {})
+            if not isinstance(trigger_params, dict):
+                self._fail("Trigger parameters must be an object", "INVALID_PARAMETER")
+            self._reject_secret_fields(trigger_params)
+            if trigger_tool != "webhook.received" and trigger.get("type") != "webhook":
+                self._reject_unknown_parameters(trigger_params, tool.get("input_schema", {}))
+            cleaned_params = _mock_templates_for_validation(trigger_params, tool.get("input_schema", {}))
+            try:
+                validate_schema(instance=cleaned_params, schema=tool.get("input_schema", {}))
+            except JsonSchemaValidationError as exc:
+                self._fail(f"Trigger: {exc.message}", "INVALID_PARAMETER")
+        else:
+            if trigger.get("type") not in self._valid_trigger_types:
+                self._fail("Unsupported workflow trigger", "INVALID_WORKFLOW")
+            if not isinstance(trigger.get("parameters", {}), dict):
+                self._fail("Trigger parameters must be an object", "INVALID_PARAMETER")
 
         steps = workflow.get("steps")
         if not isinstance(steps, list) or not steps:
@@ -68,6 +138,8 @@ class WorkflowValidator:
             tool = get_tool(tool_name)
             if tool is None:
                 self._fail(f"Tool '{tool_name}' is not registered", "UNKNOWN_TOOL")
+            if is_trigger_tool(tool_name):
+                self._fail(f"Trigger tool '{tool_name}' cannot be used as an action step", "INVALID_TOOL")
             if tool_name not in TOOL_NODE_MAPPINGS:
                 self._fail(f"Tool '{tool_name}' is not supported by the compiler", "UNSUPPORTED_TOOL")
             integration = tool.get("integration")
@@ -108,6 +180,13 @@ class WorkflowValidator:
                     if len(parts) < 2 or not parts[1]:
                         self._fail(f"Invalid reference '{{{{{reference}}}}}'", "INVALID_REFERENCE")
                     if source == "trigger":
+                        trigger_tool_name = trigger.get("tool") or ("webhook.received" if trigger.get("type") == "webhook" else None)
+                        if trigger_tool_name and trigger_tool_name != "webhook.received" and trigger.get("type") != "webhook":
+                            tool_def = get_tool(trigger_tool_name)
+                            if tool_def:
+                                output_props = tool_def.get("output_schema", {}).get("properties", {})
+                                if parts[1] not in output_props:
+                                    self._fail(f"Unknown output field '{parts[1]}' on 'trigger'", "UNKNOWN_REFERENCE")
                         continue
                     matching = next((step for step in steps if step.get("id") == source), None)
                     if matching is None:
@@ -159,10 +238,10 @@ class ToolNodeMapping:
 
 
 TOOL_NODE_MAPPINGS = {
-    "crm.find_customer": ToolNodeMapping("n8n-nodes-base.httpRequest", "crm", "find_customer"),
-    "crm.find_order": ToolNodeMapping("n8n-nodes-base.httpRequest", "crm", "find_order"),
-    "crm.create_ticket": ToolNodeMapping("n8n-nodes-base.httpRequest", "crm", "create_ticket"),
-    "crm.update_customer": ToolNodeMapping("n8n-nodes-base.httpRequest", "crm", "update_customer"),
+    "crm.find_customer": ToolNodeMapping("n8n-nodes-base.httpRequest", "httpHeaderAuth", "find_customer"),
+    "crm.find_order": ToolNodeMapping("n8n-nodes-base.httpRequest", "httpHeaderAuth", "find_order"),
+    "crm.create_ticket": ToolNodeMapping("n8n-nodes-base.httpRequest", "httpHeaderAuth", "create_ticket"),
+    "crm.update_customer": ToolNodeMapping("n8n-nodes-base.httpRequest", "httpHeaderAuth", "update_customer"),
     "gmail.search": ToolNodeMapping("n8n-nodes-base.gmail", "gmailOAuth2", "search"),
     "gmail.send": ToolNodeMapping("n8n-nodes-base.gmail", "gmailOAuth2", "send"),
     "slack.send_message": ToolNodeMapping("n8n-nodes-base.slack", "slackApi", "postMessage"),
@@ -191,7 +270,7 @@ class WorkflowCompiler:
 
         self.validator.validate(workflow)
         credential_ids = self._resolve_credentials(workflow, organization_id)
-        nodes = [self._trigger_node(workflow["trigger"])]
+        nodes = [self._trigger_node(workflow["trigger"], credential_ids)]
         for step in workflow["steps"]:
             nodes.append(self._step_node(step, credential_ids, workflow["trigger"], workflow["steps"]))
 
@@ -210,7 +289,22 @@ class WorkflowCompiler:
         }
 
     def _resolve_credentials(self, workflow: dict, organization_id: str) -> dict[str, str]:
-        integrations = sorted({get_tool(step["tool"])["integration"] for step in workflow["steps"]})
+        step_integrations = {
+            get_tool(step["tool"])["integration"]
+            for step in workflow.get("steps", [])
+            if get_tool(step.get("tool")) and get_tool(step.get("tool")).get("integration")
+        }
+        trigger = workflow.get("trigger", {})
+        trigger_tool = trigger.get("tool")
+        trigger_integrations = set()
+        if trigger_tool and trigger_tool in TRIGGER_NODE_MAPPINGS:
+            mapping = TRIGGER_NODE_MAPPINGS[trigger_tool]
+            if mapping.credential_key:
+                tool_def = get_tool(trigger_tool)
+                if tool_def and tool_def.get("integration") and tool_def["integration"] not in ("webhook", "schedule"):
+                    trigger_integrations.add(tool_def["integration"])
+        integrations = sorted(step_integrations | trigger_integrations)
+
         references = {}
         for integration in integrations:
             try:
@@ -231,36 +325,120 @@ class WorkflowCompiler:
                 ) from exc
         return references
 
-    def _trigger_node(self, trigger: dict) -> dict:
-        parameters = trigger.get("parameters", {})
-        path = parameters.get("path", "gnani-webhook")
-        return {
-            "id": "gnani-trigger",
-            "name": "Trigger",
-            "type": "n8n-nodes-base.webhook",
-            "typeVersion": 2,
-            "position": [240, 300],
-            "parameters": {
+    def _trigger_node(self, trigger: dict, credential_ids: Optional[dict[str, str]] = None) -> dict:
+        credential_ids = credential_ids or {}
+        trigger_tool = trigger.get("tool") or ("webhook.received" if trigger.get("type") == "webhook" else None)
+        mapping = TRIGGER_NODE_MAPPINGS.get(trigger_tool, TRIGGER_NODE_MAPPINGS["webhook.received"])
+        parameters = deepcopy(trigger.get("parameters", {}))
+
+        node_parameters = {}
+        if mapping.node_type == "n8n-nodes-base.webhook":
+            path = parameters.get("path", "gnani-webhook")
+            node_parameters = {
                 "httpMethod": "POST",
                 "path": path,
                 "responseMode": "lastNode",
-            },
+            }
+        elif mapping.node_type == "n8n-nodes-base.gmailTrigger":
+            filters = {}
+            read_status = parameters.get("read_status", "unread")
+            if read_status:
+                filters["readStatus"] = read_status
+            if parameters.get("query"):
+                filters["q"] = parameters["query"]
+            node_parameters = {
+                "authentication": "oAuth2",
+                "event": "messageReceived",
+                "simple": False,
+                "filters": filters,
+            }
+        elif mapping.node_type == "n8n-nodes-base.slackTrigger":
+            node_parameters = {
+                "event": "message",
+            }
+            if parameters.get("channel"):
+                node_parameters["channel"] = parameters["channel"]
+        elif mapping.node_type == "n8n-nodes-base.scheduleTrigger":
+            if trigger_tool == "schedule.weekly":
+                day = parameters.get("day_of_week", "monday")
+                hour = parameters.get("hour", 9)
+                minute = parameters.get("minute", 0)
+                node_parameters = {
+                    "rule": {
+                        "interval": [
+                            {
+                                "field": "weeks",
+                                "triggerAtHour": hour,
+                                "triggerAtMinute": minute,
+                                "triggerAtDay": [day],
+                            }
+                        ]
+                    }
+                }
+            else:
+                hour = parameters.get("hour", 9)
+                minute = parameters.get("minute", 0)
+                node_parameters = {
+                    "rule": {
+                        "interval": [
+                            {
+                                "field": "days",
+                                "triggerAtHour": hour,
+                                "triggerAtMinute": minute,
+                            }
+                        ]
+                    }
+                }
+        else:
+            node_parameters = parameters
+
+        node = {
+            "id": "gnani-trigger",
+            "name": "Trigger",
+            "type": mapping.node_type,
+            "typeVersion": mapping.type_version,
+            "position": [240, 300],
+            "parameters": node_parameters,
         }
+        if mapping.credential_key:
+            tool_def = get_tool(trigger_tool) if trigger_tool else None
+            integration = tool_def.get("integration") if tool_def else None
+            if integration and integration in credential_ids:
+                node["credentials"] = {mapping.credential_key: {"id": credential_ids[integration]}}
+        return node
 
     def _step_node(self, step: dict, credential_ids: dict[str, str], trigger: dict, steps: list[dict]) -> dict:
         mapping = TOOL_NODE_MAPPINGS[step["tool"]]
         integration = get_tool(step["tool"])["integration"]
+        mapped_input = self._map_parameters(step["parameters"], trigger, steps)
+        node_parameters = {
+            "operation": mapping.operation,
+            "tool": step["tool"],
+            "input": mapped_input,
+        }
+        if step["tool"] == "gmail.send":
+            node_parameters["resource"] = "message"
+            node_parameters["operation"] = "send"
+            node_parameters["toEmail"] = mapped_input.get("to", "")
+            node_parameters["subject"] = mapped_input.get("subject", "")
+            node_parameters["message"] = mapped_input.get("body", "")
+            if mapped_input.get("thread_id"):
+                node_parameters.setdefault("options", {})["threadId"] = mapped_input["thread_id"]
+            if mapped_input.get("cc"):
+                node_parameters.setdefault("options", {})["ccEmail"] = mapped_input["cc"]
+        elif step["tool"] == "slack.send_message":
+            node_parameters["resource"] = "message"
+            node_parameters["operation"] = "post"
+            node_parameters["channel"] = mapped_input.get("channel", "")
+            node_parameters["text"] = mapped_input.get("message", "")
+
         return {
             "id": f"gnani-{step['id']}",
             "name": step["id"],
             "type": mapping.node_type,
             "typeVersion": 1,
             "position": [520, 300 + steps.index(step) * 180],
-            "parameters": {
-                "operation": mapping.operation,
-                "tool": step["tool"],
-                "input": self._map_parameters(step["parameters"], trigger, steps),
-            },
+            "parameters": node_parameters,
             "credentials": {mapping.credential_key: {"id": credential_ids[integration]}},
         }
 
@@ -294,8 +472,20 @@ class WorkflowCompiler:
     @staticmethod
     def _n8n_reference(reference: str) -> str:
         source, field = reference.split(".", 1)
-        node_name = "Trigger" if source == "trigger" else source
-        return f'$node["{node_name}"].json["{field}"]'
+        if source == "trigger":
+            field_expressions = {
+                "from": '($node["Trigger"].json["from"] || $node["Trigger"].json["From"])',
+                "to": '($node["Trigger"].json["to"] || $node["Trigger"].json["To"])',
+                "subject": '($node["Trigger"].json["subject"] || $node["Trigger"].json["Subject"])',
+                "body": '($node["Trigger"].json["text"] || $node["Trigger"].json["body"] || $node["Trigger"].json["snippet"])',
+                "message_id": '($node["Trigger"].json["id"] || $node["Trigger"].json["message_id"])',
+                "thread_id": '($node["Trigger"].json["threadId"] || $node["Trigger"].json["thread_id"])',
+                "date": '($node["Trigger"].json["date"] || $node["Trigger"].json["Date"])',
+            }
+            if field in field_expressions:
+                return field_expressions[field]
+            return f'$node["Trigger"].json["{field}"]'
+        return f'$node["{source}"].json["{field}"]'
 
     def _compile_legacy(self, workflow: dict, organization_id: str) -> dict:
         integrations = self._required_integrations(workflow)

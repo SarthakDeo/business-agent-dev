@@ -73,7 +73,7 @@ def test_create_automation_compiles_creates_and_persists_mapping(tmp_path):
     assert result["n8n_workflow_id"] == "n8n-workflow-1"
     created = client.create_workflow.call_args.args[0]
     assert created["nodes"][0]["type"] == "n8n-nodes-base.webhook"
-    assert created["nodes"][1]["credentials"]["crm"]["id"] == "n8n-crm-1"
+    assert created["nodes"][1]["credentials"]["httpHeaderAuth"]["id"] == "n8n-crm-1"
     assert created["nodes"][2]["credentials"]["slackApi"]["id"] == "n8n-slack-1"
     assert "FAKE_CRM_SECRET" not in str(created)
     assert "FAKE_SLACK_SECRET" not in str(created)

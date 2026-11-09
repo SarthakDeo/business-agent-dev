@@ -1,4 +1,4 @@
-"""Gnani Prisma speech-to-text client."""
+"""Voice2Flow Prisma speech-to-text client."""
 
 from .prisma_client import transcribe
 

@@ -49,6 +49,10 @@ class AgentConfirmResponse(BaseModel):
     error_code: Optional[str] = None
 
 
+class AgentTranscribeResponse(BaseModel):
+    transcript: str
+
+
 # ─── AUTOMATION SCHEMAS ───────────────────────────────────────────────────────
 
 class AutomationSummaryResponse(BaseModel):
@@ -80,6 +84,20 @@ class IntegrationStatusResponse(BaseModel):
     status: str
     account_identifier: Optional[str] = None
     connected_at: Optional[str] = None
+    auth_type: Optional[str] = None
+    description: Optional[str] = None
+
+
+class OAuthUrlResponse(BaseModel):
+    url: str
+    state: str
+    configured: bool = True
+
+
+class OAuthCallbackRequest(BaseModel):
+    code: str = Field(..., min_length=1)
+    state: str = Field(..., min_length=1)
+    redirect_uri: Optional[str] = None
 
 
 class IntegrationConnectRequest(BaseModel):

@@ -5,7 +5,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.app import app
-from backend.api.dependencies import clear_session_contexts, set_state_store
+from backend.api.dependencies import (
+    clear_credential_mappings,
+    clear_session_contexts,
+    reset_n8n_client,
+    set_n8n_client,
+    set_state_store,
+)
 from backend.integrations.persistence import IntegrationStateStore
 
 
@@ -14,10 +20,14 @@ def test_store(tmp_path):
     """Isolated state store fixture for FastAPI tests."""
     store = IntegrationStateStore(tmp_path / "api_test.sqlite3")
     set_state_store(store)
+    set_n8n_client(None)
     clear_session_contexts()
+    clear_credential_mappings()
     yield store
     clear_session_contexts()
+    clear_credential_mappings()
     set_state_store(None)
+    reset_n8n_client()
 
 
 @pytest.fixture
@@ -221,6 +231,56 @@ def test_cross_tenant_cannot_confirm_other_tenant_action(client):
     )
     assert bad_res.status_code == 404
     assert "No pending operation found" in bad_res.json()["error"]
+
+
+# ─── 4B. VOICE TRANSCRIBE ENDPOINT ───────────────────────────────────────────
+
+def test_transcribe_endpoint_success(client):
+    headers = {
+        "X-Organization-Id": "org-voice",
+        "X-User-Id": "user-voice",
+        "X-User-Permissions": "slack.send",
+    }
+    fake_audio = b"RIFF....WAVEfmt...."
+    with patch("backend.prisma.transcribe", return_value="Send a Slack message to the support channel") as mock_stt:
+        res = client.post(
+            "/api/agent/transcribe",
+            files={"file": ("test_recording.wav", fake_audio, "audio/wav")},
+            headers=headers,
+        )
+    assert res.status_code == 200
+    assert res.json() == {"transcript": "Send a Slack message to the support channel"}
+    mock_stt.assert_called_once_with(fake_audio, filename="test_recording.wav")
+
+
+def test_transcribe_endpoint_empty_audio(client):
+    headers = {
+        "X-Organization-Id": "org-voice",
+        "X-User-Id": "user-voice",
+        "X-User-Permissions": "slack.send",
+    }
+    res = client.post(
+        "/api/agent/transcribe",
+        files={"file": ("empty.wav", b"", "audio/wav")},
+        headers=headers,
+    )
+    assert res.status_code == 400
+
+
+def test_transcribe_endpoint_stt_failure_returns_503(client):
+    headers = {
+        "X-Organization-Id": "org-voice",
+        "X-User-Id": "user-voice",
+        "X-User-Permissions": "slack.send",
+    }
+    with patch("backend.prisma.transcribe", side_effect=RuntimeError("Prisma API connection error")):
+        res = client.post(
+            "/api/agent/transcribe",
+            files={"file": ("test.wav", b"audio-bytes", "audio/wav")},
+            headers=headers,
+        )
+    assert res.status_code == 503
+    assert "Speech recognition service is temporarily unavailable" in res.json()["error"]
 
 
 # ─── 5. AUTOMATIONS TENANT ISOLATION ──────────────────────────────────────────
@@ -913,6 +973,133 @@ def test_phase11g_observability_header_enforcement(client):
     exec_res = client.get("/api/executions", headers=bad_headers)
     assert exec_res.status_code == 400
     assert "Missing required header 'X-Organization-Id'" in exec_res.json()["error"]
+
+
+# ─── 11H. N8N DEPENDENCY WIRING TESTS ─────────────────────────────────────────
+
+def test_n8n_dependency_wiring(test_store):
+    from unittest.mock import MagicMock
+    from backend.api.dependencies import get_n8n_client, get_integration_manager, get_agent, set_n8n_client, reset_n8n_client
+    from backend.integrations.n8n_client import N8nClient
+
+    # 1. Default resolution from environment
+    reset_n8n_client()
+    default_client = get_n8n_client()
+    assert default_client is not None
+    assert isinstance(default_client, N8nClient)
+    assert default_client.config.base_url.rstrip("/") == "http://localhost:5678"
+
+    # 2. Dependency injection through IntegrationManager -> Agent -> AutomationManager
+    mgr = get_integration_manager(store=test_store, n8n_client=default_client)
+    assert mgr.n8n_client is default_client
+
+    agent = get_agent(integration_manager=mgr)
+    assert agent.integration_manager is mgr
+    assert agent.automation_manager.n8n_client is default_client
+
+    # 3. Custom injection via set_n8n_client
+    mock_n8n = MagicMock(spec=N8nClient)
+    set_n8n_client(mock_n8n)
+    assert get_n8n_client() is mock_n8n
+
+    mgr_mock = get_integration_manager(store=test_store, n8n_client=mock_n8n)
+    assert mgr_mock.n8n_client is mock_n8n
+    agent_mock = get_agent(integration_manager=mgr_mock)
+    assert agent_mock.automation_manager.n8n_client is mock_n8n
+
+    reset_n8n_client()
+
+
+def test_automate_confirm_uses_configured_n8n_client(client, test_store):
+    from unittest.mock import MagicMock
+    from backend.api.dependencies import set_n8n_client, reset_n8n_client
+
+    mock_n8n = MagicMock()
+    mock_n8n.create_credential.return_value = {"id": "n8n_cred_mock_1"}
+    mock_n8n.create_workflow.return_value = {"id": "n8n_wf_live_123"}
+    set_n8n_client(mock_n8n)
+
+    headers = {
+        "X-Organization-Id": "org-wire-auto",
+        "X-User-Id": "user-wire-auto",
+        "X-User-Permissions": "slack.send",
+    }
+
+    # Pre-connect Slack integration (auto-provisions via mock_n8n)
+    conn_res = client.post("/api/integrations/slack/connect", json={"secret": "slack_token_wire"}, headers=headers)
+    assert conn_res.status_code == 200
+
+    plan = {
+        "mode": "AUTOMATE",
+        "operation": "CREATE",
+        "name": "Live Wire Automation",
+        "goal": "Notify slack on webhook",
+        "trigger": {"type": "webhook", "parameters": {"path": "wire-event"}},
+        "steps": [{"id": "step_1", "tool": "slack.send_message", "parameters": {"channel": "alerts", "message": "Alert"}}],
+    }
+
+    with patch("backend.agent.agent.plan", return_value=plan):
+        chat_res = client.post("/api/agent/chat", json={"message": "Setup alert"}, headers=headers)
+        assert chat_res.status_code == 200
+        chat_data = chat_res.json()
+        assert chat_data["status"] == "awaiting_confirmation"
+
+        run_id = chat_data["run_id"]
+        conv_id = chat_data["conversation_id"]
+
+        confirm_res = client.post(
+            "/api/agent/confirm",
+            json={"run_id": run_id, "conversation_id": conv_id, "approved": True},
+            headers=headers,
+        )
+        assert confirm_res.status_code == 200
+        confirm_data = confirm_res.json()
+        assert confirm_data["status"] == "completed"
+        assert confirm_data["execution_results"]["automation"]["n8n_workflow_id"] == "n8n_wf_live_123"
+
+    reset_n8n_client()
+
+
+def test_automate_confirm_preserves_n8n_unavailable_when_unconfigured(client, test_store):
+    from backend.api.dependencies import set_n8n_client, reset_n8n_client
+
+    # Explicitly set n8n_client to None
+    set_n8n_client(None)
+
+    headers = {
+        "X-Organization-Id": "org-unavail",
+        "X-User-Id": "user-unavail",
+        "X-User-Permissions": "slack.send",
+    }
+
+    client.post("/api/integrations/slack/connect", json={"secret": "slack_token_unavail"}, headers=headers)
+
+    plan = {
+        "mode": "AUTOMATE",
+        "operation": "CREATE",
+        "name": "Unavail Automation",
+        "goal": "Notify slack on webhook",
+        "trigger": {"type": "webhook", "parameters": {"path": "unavail-event"}},
+        "steps": [{"id": "step_1", "tool": "slack.send_message", "parameters": {"channel": "alerts", "message": "Alert"}}],
+    }
+
+    with patch("backend.agent.agent.plan", return_value=plan):
+        chat_res = client.post("/api/agent/chat", json={"message": "Setup alert"}, headers=headers)
+        assert chat_res.status_code == 200
+        chat_data = chat_res.json()
+        assert chat_data["status"] == "awaiting_confirmation"
+
+        confirm_res = client.post(
+            "/api/agent/confirm",
+            json={"run_id": chat_data["run_id"], "conversation_id": chat_data["conversation_id"], "approved": True},
+            headers=headers,
+        )
+        confirm_data = confirm_res.json()
+        assert confirm_data["status"] == "error"
+        assert "N8N_UNAVAILABLE: n8n is not configured" in confirm_data["error"]
+
+    reset_n8n_client()
+
 
 
 
